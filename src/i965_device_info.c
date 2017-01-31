@@ -419,6 +419,9 @@ static struct hw_codec_info bxt_hw_codec_info = {
     .has_hevc10_decoding = 1,
     .has_vp9_decoding = 1,
     .has_vpp_p010 = 1,
+    .has_lp_h264_encoding = 1,
+
+    .lp_h264_brc_mode = VA_RC_CQP,
 
     .num_filters = 5,
     .filters = {
@@ -447,6 +450,7 @@ static struct hw_codec_info kbl_hw_codec_info = {
                               VA_PROFILE_MASK(H264MultiviewHigh)),
     .vp9_dec_profiles = VP9_PROFILE_MASK(0) |
                         VP9_PROFILE_MASK(2),
+    .vp9_enc_profiles = VP9_PROFILE_MASK(0),
 
     .h264_dec_chroma_formats = EXTRA_H264_DEC_CHROMA_FORMATS,
     .jpeg_dec_chroma_formats = EXTRA_JPEG_DEC_CHROMA_FORMATS,
@@ -477,6 +481,9 @@ static struct hw_codec_info kbl_hw_codec_info = {
     .has_vp9_decoding = 1,
     .has_vpp_p010 = 1,
     .has_vp9_encoding = 1,
+    .has_lp_h264_encoding = 1,
+
+    .lp_h264_brc_mode = VA_RC_CQP,
 
     .num_filters = 5,
     .filters = {

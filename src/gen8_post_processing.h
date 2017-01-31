@@ -85,4 +85,5 @@ gen8_post_processing_context_common_init(VADriverContextP ctx,
                                          struct pp_module *pp_modules,
                                          int num_pp_modules,
                                          struct intel_batchbuffer *batch);
+
 #endif

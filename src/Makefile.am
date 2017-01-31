@@ -101,6 +101,7 @@ source_c = \
 	gen9_vp9_encoder_kernels.c      \
 	gen9_vp9_const_def.c      \
 	gen9_vp9_encoder.c      \
+	intel_common_vpp_internal.c           \
 	$(NULL)
 
 source_h = \
@@ -153,6 +154,8 @@ source_h = \
 	gen9_vp9_encapi.h           \
 	gen9_vp9_const_def.h      \
 	gen9_vp9_encoder_kernels.h           \
+	intel_gen_vppapi.h           \
+	intel_common_vpp_internal.h           \
 	$(NULL)
 
 # convenience library that can be linked by driver and tests

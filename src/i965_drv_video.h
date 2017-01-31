@@ -149,6 +149,10 @@
 #define HAS_VP9_ENCODING(ctx)          ((ctx)->codec_info->has_vp9_encoding && \
                                          (ctx)->intel.has_bsd)
 
+#define HAS_VP9_ENCODING_PROFILE(ctx, profile)                     \
+    (HAS_VP9_ENCODING(ctx) &&                                      \
+     ((ctx)->codec_info->vp9_enc_profiles & (1U << (profile - VAProfileVP9Profile0))))
+
 struct i965_surface
 {
     struct object_base *base;
@@ -452,6 +456,7 @@ struct hw_codec_info
 
     unsigned int h264_mvc_dec_profiles;
     unsigned int vp9_dec_profiles;
+    unsigned int vp9_enc_profiles;
 
     unsigned int h264_dec_chroma_formats;
     unsigned int jpeg_dec_chroma_formats;
@@ -493,6 +498,7 @@ struct hw_codec_info
 
 
 #include "i965_render.h"
+#include "i965_gpe_utils.h"
 
 struct i965_driver_data 
 {
@@ -529,6 +535,8 @@ struct i965_driver_data
     struct va_wl_output *wl_output;
 
     VADriverContextP wrapper_pdrvctx;
+
+    struct i965_gpe_table gpe_table;
 };
 
 #define NEW_CONFIG_ID() object_heap_allocate(&i965->config_heap);

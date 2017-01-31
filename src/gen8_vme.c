@@ -333,10 +333,10 @@ static VAStatus gen8_vme_interface_setup(VADriverContextP ctx,
     dri_bo *bo;
     unsigned char *desc_ptr;
 
-    bo = vme_context->gpe_context.dynamic_state.bo;
+    bo = vme_context->gpe_context.idrt.bo;
     dri_bo_map(bo, 1);
     assert(bo->virtual);
-    desc_ptr = (unsigned char *)bo->virtual + vme_context->gpe_context.idrt_offset;
+    desc_ptr = (unsigned char *)bo->virtual + vme_context->gpe_context.idrt.offset;
 
     desc = (struct gen8_interface_descriptor_data *)desc_ptr;
 
@@ -389,10 +389,10 @@ static VAStatus gen8_vme_constant_setup(VADriverContextP ctx,
 
     vme_state_message[31] = mv_num;
 
-    dri_bo_map(vme_context->gpe_context.dynamic_state.bo, 1);
-    assert(vme_context->gpe_context.dynamic_state.bo->virtual);
-    constant_buffer = (unsigned char *)vme_context->gpe_context.dynamic_state.bo->virtual +
-                                         vme_context->gpe_context.curbe_offset;
+    dri_bo_map(vme_context->gpe_context.curbe.bo, 1);
+    assert(vme_context->gpe_context.curbe.bo->virtual);
+    constant_buffer = (unsigned char *)vme_context->gpe_context.curbe.bo->virtual +
+                                         vme_context->gpe_context.curbe.offset;
 
     /* VME MV/Mb cost table is passed by using const buffer */
     /* Now it uses the fixed search path. So it is constructed directly
@@ -400,7 +400,7 @@ static VAStatus gen8_vme_constant_setup(VADriverContextP ctx,
      */
     memcpy(constant_buffer, (char *)vme_context->vme_state_message, 128);
 	
-    dri_bo_unmap(vme_context->gpe_context.dynamic_state.bo);
+    dri_bo_unmap(vme_context->gpe_context.curbe.bo);
 
     return VA_STATUS_SUCCESS;
 }
@@ -719,11 +719,10 @@ static void gen8_vme_pipeline_programing(VADriverContextP ctx,
     gen8_gpe_pipeline_setup(ctx, &vme_context->gpe_context, batch);
     BEGIN_BATCH(batch, 3);
     OUT_BATCH(batch, MI_BATCH_BUFFER_START | (1 << 8) | (1 << 0));
-    OUT_RELOC(batch,
+    OUT_RELOC64(batch,
               vme_context->vme_batchbuffer.bo,
               I915_GEM_DOMAIN_COMMAND, 0, 
               0);
-    OUT_BATCH(batch, 0);
     ADVANCE_BATCH(batch);
 
     intel_batchbuffer_end_atomic(batch);	
@@ -1110,11 +1109,10 @@ gen8_vme_mpeg2_pipeline_programing(VADriverContextP ctx,
     gen8_gpe_pipeline_setup(ctx, &vme_context->gpe_context, batch);
     BEGIN_BATCH(batch, 4);
     OUT_BATCH(batch, MI_BATCH_BUFFER_START | (1 << 8) | (1 << 0));
-    OUT_RELOC(batch,
+    OUT_RELOC64(batch,
               vme_context->vme_batchbuffer.bo,
               I915_GEM_DOMAIN_COMMAND, 0, 
               0);
-    OUT_BATCH(batch, 0);
     OUT_BATCH(batch, 0);
     ADVANCE_BATCH(batch);
 
@@ -1250,11 +1248,10 @@ gen8_vme_vp8_pipeline_programing(VADriverContextP ctx,
     gen8_gpe_pipeline_setup(ctx, &vme_context->gpe_context, batch);
     BEGIN_BATCH(batch, 4);
     OUT_BATCH(batch, MI_BATCH_BUFFER_START | (1 << 8) | (1 << 0));
-    OUT_RELOC(batch,
+    OUT_RELOC64(batch,
               vme_context->vme_batchbuffer.bo,
               I915_GEM_DOMAIN_COMMAND, 0,
               0);
-    OUT_BATCH(batch, 0);
     OUT_BATCH(batch, 0);
     ADVANCE_BATCH(batch);
 
@@ -1333,6 +1330,7 @@ gen8_vme_context_destroy(void *context)
 
 Bool gen8_vme_context_init(VADriverContextP ctx, struct intel_encoder_context *encoder_context)
 {
+    struct i965_driver_data *i965 = i965_driver_data(ctx);
     struct gen6_vme_context *vme_context = NULL;
     struct i965_kernel *vme_kernel_list = NULL;
     int i965_kernel_num;
@@ -1378,12 +1376,19 @@ Bool gen8_vme_context_init(VADriverContextP ctx, struct intel_encoder_context *e
         vme_context->vme_kernel_sum = i965_kernel_num;
         vme_context->gpe_context.surface_state_binding_table.length = (SURFACE_STATE_PADDED_SIZE + sizeof(unsigned int)) * MAX_MEDIA_SURFACES_GEN6;
 
-        vme_context->gpe_context.idrt_size = sizeof(struct gen8_interface_descriptor_data) * MAX_INTERFACE_DESC_GEN6;
-        vme_context->gpe_context.curbe_size = CURBE_TOTAL_DATA_LENGTH;
-        vme_context->gpe_context.sampler_size = 0;
+        vme_context->gpe_context.idrt.entry_size = ALIGN(sizeof(struct gen8_interface_descriptor_data), 64);
+        vme_context->gpe_context.idrt.max_entries = MAX_INTERFACE_DESC_GEN6;
 
+        vme_context->gpe_context.curbe.length = CURBE_TOTAL_DATA_LENGTH;
+        vme_context->gpe_context.sampler.entry_size = 0;
+        vme_context->gpe_context.sampler.max_entries = 0;
 
-        vme_context->gpe_context.vfe_state.max_num_threads = 60 - 1;
+        if (i965->intel.eu_total > 0) {
+            vme_context->gpe_context.vfe_state.max_num_threads = 6 *
+                               i965->intel.eu_total;
+        } else
+            vme_context->gpe_context.vfe_state.max_num_threads = 60 - 1;
+
         vme_context->gpe_context.vfe_state.num_urb_entries = 64;
         vme_context->gpe_context.vfe_state.gpgpu_mode = 0;
         vme_context->gpe_context.vfe_state.urb_entry_size = 16;

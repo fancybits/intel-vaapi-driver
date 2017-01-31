@@ -38,6 +38,8 @@
 #include "i965_drv_video.h"
 #include "i965_post_processing.h"
 #include "gen75_picture_process.h"
+#include "gen8_post_processing.h"
+#include "intel_gen_vppapi.h"
 
 extern struct hw_context *
 i965_proc_context_init(VADriverContextP ctx,
@@ -53,11 +55,6 @@ gen75_vpp_fmt_cvt(VADriverContextP ctx,
     struct intel_video_process_context *proc_ctx = 
              (struct intel_video_process_context *)hw_context;
   
-    /* implicity surface format coversion and scaling */
-    if(proc_ctx->vpp_fmt_cvt_ctx == NULL){
-         proc_ctx->vpp_fmt_cvt_ctx = i965_proc_context_init(ctx, NULL);
-    }
-
     va_status = i965_proc_picture(ctx, profile, codec_state,
                                   proc_ctx->vpp_fmt_cvt_ctx);
 
@@ -90,6 +87,121 @@ gen75_vpp_vebox(VADriverContextP ctx,
 
      return va_status;
 } 
+
+static int intel_gpe_support_10bit_scaling(struct intel_video_process_context *proc_ctx)
+{
+    struct i965_proc_context *gpe_proc_ctx;
+
+    if (!proc_ctx || !proc_ctx->vpp_fmt_cvt_ctx)
+        return 0;
+
+    gpe_proc_ctx = (struct i965_proc_context *)proc_ctx->vpp_fmt_cvt_ctx;
+
+    if (gpe_proc_ctx->pp_context.scaling_context_initialized)
+        return 1;
+    else
+        return 0;
+}
+
+static void
+rgb_to_yuv(unsigned int argb,
+           unsigned char *y,
+           unsigned char *u,
+           unsigned char *v,
+           unsigned char *a)
+{
+    int r = ((argb >> 16) & 0xff);
+    int g = ((argb >> 8) & 0xff);
+    int b = ((argb >> 0) & 0xff);
+
+    *y = (257 * r + 504 * g + 98 * b) / 1000 + 16;
+    *v = (439 * r - 368 * g - 71 * b) / 1000 + 128;
+    *u = (-148 * r - 291 * g + 439 * b) / 1000 + 128;
+    *a = ((argb >> 24) & 0xff);
+}
+
+static void
+gen8plus_vpp_clear_surface(VADriverContextP ctx,
+                       struct i965_post_processing_context *pp_context,
+                       struct object_surface *obj_surface,
+                       unsigned int color)
+{
+    struct intel_batchbuffer *batch = pp_context->batch;
+    unsigned int blt_cmd, br13;
+    unsigned int tiling = 0, swizzle = 0;
+    int pitch;
+    unsigned char y, u, v, a = 0;
+    int region_width, region_height;
+
+    /* Currently only support NV12 surface */
+    if (!obj_surface || obj_surface->fourcc != VA_FOURCC_NV12)
+        return;
+
+    rgb_to_yuv(color, &y, &u, &v, &a);
+
+    if (a == 0)
+        return;
+
+    dri_bo_get_tiling(obj_surface->bo, &tiling, &swizzle);
+    blt_cmd = GEN8_XY_COLOR_BLT_CMD;
+    pitch = obj_surface->width;
+
+    if (tiling != I915_TILING_NONE) {
+        assert(tiling == I915_TILING_Y);
+        // blt_cmd |= XY_COLOR_BLT_DST_TILED;
+        // pitch >>= 2;
+    }
+
+    br13 = 0xf0 << 16;
+    br13 |= BR13_8;
+    br13 |= pitch;
+
+    intel_batchbuffer_start_atomic_blt(batch, 56);
+    BEGIN_BLT_BATCH(batch, 14);
+
+    region_width = obj_surface->width;
+    region_height = obj_surface->height;
+
+    OUT_BATCH(batch, blt_cmd);
+    OUT_BATCH(batch, br13);
+    OUT_BATCH(batch,
+              0 << 16 |
+              0);
+    OUT_BATCH(batch,
+              region_height << 16 |
+              region_width);
+    OUT_RELOC64(batch, obj_surface->bo,
+              I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
+              0);
+    OUT_BATCH(batch, y);
+
+    br13 = 0xf0 << 16;
+    br13 |= BR13_565;
+    br13 |= pitch;
+
+    region_width = obj_surface->width / 2;
+    region_height = obj_surface->height / 2;
+
+    if (tiling == I915_TILING_Y) {
+        region_height = ALIGN(obj_surface->height / 2, 32);
+    }
+
+    OUT_BATCH(batch, blt_cmd);
+    OUT_BATCH(batch, br13);
+    OUT_BATCH(batch,
+              0 << 16 |
+              0);
+    OUT_BATCH(batch,
+              region_height << 16 |
+              region_width);
+    OUT_RELOC64(batch, obj_surface->bo,
+              I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
+              obj_surface->width * obj_surface->y_cb_offset);
+    OUT_BATCH(batch, v << 8 | u);
+
+    ADVANCE_BATCH(batch);
+    intel_batchbuffer_end_atomic(batch);
+}
 
 VAStatus 
 gen75_proc_picture(VADriverContextP ctx,
@@ -148,18 +260,22 @@ gen75_proc_picture(VADriverContextP ctx,
         goto error;
     }
 
+    if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL ){
+        /* explicitly initialize the VPP based on Render ring */
+        if (proc_ctx->vpp_fmt_cvt_ctx == NULL)
+            proc_ctx->vpp_fmt_cvt_ctx = i965_proc_context_init(ctx, NULL);
+    }
+
     if (!obj_dst_surf->bo) {
         unsigned int is_tiled = 1;
         unsigned int fourcc = VA_FOURCC_NV12;
         int sampling = SUBSAMPLE_YUV420;
+
+        if (obj_dst_surf->expected_format == VA_RT_FORMAT_YUV420_10BPP)
+            fourcc = VA_FOURCC_P010;
+
         i965_check_alloc_surface_bo(ctx, obj_dst_surf, is_tiled, fourcc, sampling);
     }  
-
-    proc_ctx->surface_render_output_object = obj_dst_surf;
-    proc_ctx->surface_pipeline_input_object = obj_src_surf;
-    assert(pipeline_param->num_filters <= 4);
-
-    int vpp_stage1 = 0, vpp_stage2 = 1, vpp_stage3 = 0;
 
     if (pipeline_param->surface_region) {
         src_rect.x = pipeline_param->surface_region->x;
@@ -184,6 +300,121 @@ gen75_proc_picture(VADriverContextP ctx,
         dst_rect.width = obj_dst_surf->orig_width;
         dst_rect.height = obj_dst_surf->orig_height;
     }
+
+    if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL ) {
+/* The Bit 2 is used to indicate that it is 10bit or 8bit.
+ * The Bit 0/1 is used to indicate the 420/422/444 format
+ */
+#define SRC_10BIT_420    (5 << 0)
+#define SRC_10BIT_422    (6 << 0)
+#define SRC_10BIT_444    (7 << 0)
+#define SRC_8BIT_420     (1 << 0)
+
+/* The Bit 6 is used to indicate that it is 10bit or 8bit.
+ * The Bit 5/4 is used to indicate the 420/422/444 format
+ */
+#define DST_10BIT_420    (5 << 4)
+#define DST_10BIT_422    (6 << 4)
+#define DST_10BIT_444    (7 << 4)
+#define DST_8BIT_420     (1 << 4)
+
+/* This is mainly for YUY2/RGBA. It is reserved for further */
+#define SRC_YUV_PACKED   (1 << 3)
+#define DST_YUV_PACKED   (1 << 7)
+
+#define MASK_CSC         (0xFF)
+#define SCALE_10BIT_420  (SRC_10BIT_420 | DST_10BIT_420)
+#define SCALE_8BIT_420  (SRC_8BIT_420 | DST_8BIT_420)
+
+        unsigned int scale_flag;
+
+        scale_flag = 0;
+        if (obj_src_surf->fourcc == VA_FOURCC_P010 ||
+            obj_src_surf->fourcc == VA_FOURCC_I010)
+            scale_flag |= SRC_10BIT_420;
+
+        if (obj_dst_surf->fourcc == VA_FOURCC_P010 ||
+            obj_dst_surf->fourcc == VA_FOURCC_I010)
+            scale_flag |= DST_10BIT_420;
+
+        if (obj_src_surf->fourcc == VA_FOURCC_NV12 ||
+            obj_src_surf->fourcc == VA_FOURCC_I420)
+            scale_flag |= SRC_8BIT_420;
+
+        if (obj_dst_surf->fourcc == VA_FOURCC_NV12 ||
+            obj_dst_surf->fourcc == VA_FOURCC_I420)
+            scale_flag |= DST_8BIT_420;
+
+        /* If P010 is converted without resolution change,
+         * fall back to VEBOX
+         */
+        if (i965->intel.has_vebox &&
+            (obj_src_surf->fourcc == VA_FOURCC_P010) &&
+            (obj_dst_surf->fourcc == VA_FOURCC_P010) &&
+            (src_rect.width == dst_rect.width) &&
+            (src_rect.height == dst_rect.height))
+            scale_flag = 0;
+
+        if (((scale_flag & MASK_CSC) == SCALE_10BIT_420) &&
+            intel_gpe_support_10bit_scaling(proc_ctx)) {
+            struct i965_proc_context *gpe_proc_ctx;
+            struct i965_surface src_surface, dst_surface;
+            unsigned int tmp_width, tmp_x;
+
+
+            src_surface.base = (struct object_base *)obj_src_surf;
+            src_surface.type = I965_SURFACE_TYPE_SURFACE;
+            dst_surface.base = (struct object_base *)obj_dst_surf;
+            dst_surface.type = I965_SURFACE_TYPE_SURFACE;
+            gpe_proc_ctx = (struct i965_proc_context *)proc_ctx->vpp_fmt_cvt_ctx;
+
+            tmp_x = ALIGN_FLOOR(dst_rect.x, 2);
+            tmp_width = dst_rect.x + dst_rect.width;
+            tmp_width = tmp_width - tmp_x;
+            dst_rect.x = tmp_x;
+            dst_rect.width = tmp_width;
+
+            return gen9_p010_scaling_post_processing(ctx, &gpe_proc_ctx->pp_context,
+                                                     &src_surface, &src_rect,
+                                                     &dst_surface, &dst_rect);
+        }
+        if (((scale_flag & MASK_CSC) == SCALE_8BIT_420) &&
+             intel_vpp_support_yuv420p8_scaling(proc_ctx)) {
+            struct i965_proc_context *gpe_proc_ctx;
+            struct i965_surface src_surface, dst_surface;
+            unsigned int tmp_width, tmp_x;
+
+
+            src_surface.base = (struct object_base *)obj_src_surf;
+            src_surface.type = I965_SURFACE_TYPE_SURFACE;
+            dst_surface.base = (struct object_base *)obj_dst_surf;
+            dst_surface.type = I965_SURFACE_TYPE_SURFACE;
+            gpe_proc_ctx = (struct i965_proc_context *)proc_ctx->vpp_fmt_cvt_ctx;
+
+            tmp_x = ALIGN_FLOOR(dst_rect.x, 4);
+            tmp_width = dst_rect.x + dst_rect.width;
+            tmp_width = tmp_width - tmp_x;
+            dst_rect.x = tmp_x;
+            dst_rect.width = tmp_width;
+
+            if (obj_dst_surf->fourcc == VA_FOURCC_NV12 &&
+                pipeline_param->output_background_color)
+                gen8plus_vpp_clear_surface(ctx, &gpe_proc_ctx->pp_context,
+                                           obj_dst_surf,
+                                           pipeline_param->output_background_color);
+
+            return intel_yuv420p8_scaling_post_processing(ctx, &gpe_proc_ctx->pp_context,
+                                                     &src_surface, &src_rect,
+                                                     &dst_surface, &dst_rect);
+        }
+    }
+
+    proc_ctx->surface_render_output_object = obj_dst_surf;
+    proc_ctx->surface_pipeline_input_object = obj_src_surf;
+    assert(pipeline_param->num_filters <= 4);
+
+    int vpp_stage1 = 0, vpp_stage2 = 1, vpp_stage3 = 0;
+
 
     if(obj_src_surf->fourcc == VA_FOURCC_P010) {
         vpp_stage1 = 1;

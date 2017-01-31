@@ -48,6 +48,8 @@
 #include "i965_decoder.h"
 #include "i965_encoder.h"
 
+#include "i965_post_processing.h"
+
 #include "gen9_vp9_encapi.h"
 
 #define CONFIG_ID_OFFSET                0x01000000
@@ -94,6 +96,8 @@ static int get_sampling_from_fourcc(unsigned int fourcc);
 
 #define I_P010  2, 2, 2, {I965_16BITS, I965_8BITS}, 3, { {PLANE_0, OFFSET_0}, {PLANE_1, OFFSET_0}, {PLANE_1, OFFSET_16} }
 
+#define I_I010  2, 2, 3, {I965_16BITS, I965_4BITS, I965_4BITS}, 3, { {PLANE_0, OFFSET_0}, {PLANE_1, OFFSET_0}, {PLANE_2, OFFSET_0} }
+
 #define I_422H  2, 1, 3, {I965_8BITS, I965_4BITS, I965_4BITS}, 3, { {PLANE_0, OFFSET_0}, {PLANE_1, OFFSET_0}, {PLANE_2, OFFSET_0} }
 #define I_422V  1, 2, 3, {I965_8BITS, I965_4BITS, I965_4BITS}, 3, { {PLANE_0, OFFSET_0}, {PLANE_1, OFFSET_0}, {PLANE_2, OFFSET_0} }
 #define I_YV16  2, 1, 3, {I965_8BITS, I965_4BITS, I965_4BITS}, 3, { {PLANE_0, OFFSET_0}, {PLANE_2, OFFSET_0}, {PLANE_1, OFFSET_0} }
@@ -139,6 +143,7 @@ static const i965_fourcc_info i965_fourcc_infos[] = {
     DEF_YUV(IMC1, YUV420, I_S),
 
     DEF_YUV(P010, YUV420, I_SI),
+    DEF_YUV(I010, YUV420, I_S),
 
     DEF_YUV(422H, YUV422H, I_SI),
     DEF_YUV(422V, YUV422V, I_S),
@@ -823,7 +828,7 @@ i965_validate_config(VADriverContextP ctx, VAProfile profile,
         if ((HAS_VP9_DECODING_PROFILE(i965, profile)) &&
             (entrypoint == VAEntrypointVLD)) {
             va_status = VA_STATUS_SUCCESS;
-        } else if ((HAS_VP9_ENCODING(i965)) &&
+        } else if ((HAS_VP9_ENCODING_PROFILE(i965, profile)) &&
                    (entrypoint == VAEntrypointEncSlice)) {
             va_status = VA_STATUS_SUCCESS;
         } else if (profile == VAProfileVP9Profile0 && i965->wrapper_pdrvctx) {
@@ -873,6 +878,8 @@ i965_get_default_chroma_formats(VADriverContextP ctx, VAProfile profile,
         break;
 
     case VAProfileHEVCMain10:
+        if (HAS_HEVC10_ENCODING(i965) && entrypoint == VAEntrypointEncSlice)
+            chroma_formats = VA_RT_FORMAT_YUV420_10BPP;
         if (HAS_HEVC10_DECODING(i965) && entrypoint == VAEntrypointVLD)
             chroma_formats |= i965->codec_info->hevc_dec_chroma_formats;
         break;
@@ -929,7 +936,10 @@ i965_GetConfigAttributes(VADriverContextP ctx,
                     profile != VAProfileMPEG2Simple)
                     attrib_list[i].value |= VA_RC_CBR;
 
-                if (profile == VAProfileVP9Profile0)
+                if (profile == VAProfileVP9Profile0 ||
+                    profile == VAProfileH264ConstrainedBaseline ||
+                    profile == VAProfileH264Main ||
+                    profile == VAProfileH264High)
                     attrib_list[i].value |= VA_RC_VBR;
 
                 break;
@@ -1286,6 +1296,7 @@ i965_surface_native_memory(VADriverContextP ctx,
     // todo, should we disable tiling for 422 format?
     if (expected_fourcc == VA_FOURCC_I420 ||
         expected_fourcc == VA_FOURCC_IYUV ||
+        expected_fourcc == VA_FOURCC_I010 ||
         expected_fourcc == VA_FOURCC_YV12 ||
         expected_fourcc == VA_FOURCC_YV16)
         tiling = 0;
@@ -1355,6 +1366,7 @@ i965_suface_external_memory(VADriverContextP ctx,
     case VA_FOURCC_I420:
     case VA_FOURCC_IYUV:
     case VA_FOURCC_IMC3:
+    case VA_FOURCC_I010:
         ASSERT_RET(memory_attibute->num_planes == 3, VA_STATUS_ERROR_INVALID_PARAMETER);
         ASSERT_RET(memory_attibute->pitches[1] == memory_attibute->pitches[2], VA_STATUS_ERROR_INVALID_PARAMETER);
 
@@ -2510,8 +2522,12 @@ i965_create_buffer_internal(VADriverContextP ctx,
             buffer_store->buffer = malloc(msize * num_elements);
         assert(buffer_store->buffer);
 
-        if (data && (!wrapper_flag))
-            memcpy(buffer_store->buffer, data, size * num_elements);
+        if (!wrapper_flag) {
+            if (data)
+                memcpy(buffer_store->buffer, data, size * num_elements);
+            else
+                memset(buffer_store->buffer, 0, size * num_elements);
+        }
     }
 
     buffer_store->num_elements = obj_buffer->num_elements;
@@ -2828,25 +2844,12 @@ i965_BeginPicture(VADriverContextP ctx,
         obj_context->codec_state.encode.num_packed_header_data_ext = 0;
         obj_context->codec_state.encode.slice_index = 0;
         obj_context->codec_state.encode.vps_sps_seq_index = 0;
-        /*
-        * Based on ROI definition in va/va.h, the ROI set through this
-        * structure is applicable only to the current frame or field.
-        * That is to say: it is on-the-fly setting. If it is not set,
-        * the current frame doesn't use ROI.
-        * It is uncertain whether the other misc buffer should be released.
-        * So only release the previous ROI buffer.
-        */
-        i965_release_buffer_store(&obj_context->codec_state.encode.misc_param[VAEncMiscParameterTypeROI][0]);
+
+        for (i = 0; i < ARRAY_ELEMS(obj_context->codec_state.encode.misc_param); i++)
+            for (j = 0; j < ARRAY_ELEMS(obj_context->codec_state.encode.misc_param[0]); j++)
+                i965_release_buffer_store(&obj_context->codec_state.encode.misc_param[i][j]);
 
         i965_release_buffer_store(&obj_context->codec_state.encode.encmb_map);
-
-        if (obj_config->profile == VAProfileVP9Profile0) {
-            for (i = 0; i < ARRAY_ELEMS(obj_context->codec_state.encode.misc_param); i++)
-                for (j = 0; j < ARRAY_ELEMS(obj_context->codec_state.encode.misc_param[0]); j++)
-                    i965_release_buffer_store(&obj_context->codec_state.encode.misc_param[i][j]);
-
-            i965_release_buffer_store(&obj_context->codec_state.encode.seq_param_ext);
-        }
     } else {
         obj_context->codec_state.decode.current_render_target = render_target;
         i965_release_buffer_store(&obj_context->codec_state.decode.pic_param);
@@ -3732,10 +3735,15 @@ i965_GetDisplayAttributes(
         VADisplayAttribute *src_attrib, * const dst_attrib = &attribs[i];
 
         src_attrib = get_display_attribute(ctx, dst_attrib->type);
+
         if (src_attrib && (src_attrib->flags & VA_DISPLAY_ATTRIB_GETTABLE)) {
             dst_attrib->min_value = src_attrib->min_value;
             dst_attrib->max_value = src_attrib->max_value;
             dst_attrib->value     = src_attrib->value;
+            dst_attrib->flags     = src_attrib->flags;
+        } else if (src_attrib &&
+                (src_attrib->flags & VA_DISPLAY_ATTRIB_SETTABLE)) {
+            dst_attrib->flags     = src_attrib->flags;
         }
         else
             dst_attrib->flags = VA_DISPLAY_ATTRIB_NOT_SUPPORTED;
@@ -4204,6 +4212,17 @@ i965_check_alloc_surface_bo(VADriverContextP ctx,
             region_height = obj_surface->height + obj_surface->height / 2;
             break;
 
+        case VA_FOURCC_I010:
+            obj_surface->y_cb_offset = obj_surface->height;
+            obj_surface->y_cr_offset = obj_surface->height + obj_surface->height / 4;
+            obj_surface->cb_cr_width = obj_surface->orig_width / 2;
+            obj_surface->width = ALIGN(obj_surface->cb_cr_width * 2, i965->codec_info->min_linear_wpitch) * 2;
+            obj_surface->cb_cr_height = obj_surface->orig_height / 2;
+            obj_surface->cb_cr_pitch = obj_surface->width / 2;
+            region_width = obj_surface->width;
+            region_height = obj_surface->height + obj_surface->height / 2;
+
+            break;
         case VA_FOURCC_YUY2:
         case VA_FOURCC_UYVY:
             obj_surface->width = ALIGN(obj_surface->orig_width * 2, i965->codec_info->min_linear_wpitch);
@@ -4354,6 +4373,7 @@ VAStatus i965_DeriveImage(VADriverContextP ctx,
         break;
 
     case VA_FOURCC_I420:
+    case VA_FOURCC_I010:
     case VA_FOURCC_422H:
     case VA_FOURCC_IMC3:
     case VA_FOURCC_444P:
@@ -5902,6 +5922,12 @@ i965_QuerySurfaceAttributes(VADriverContextP ctx,
                   attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
                   attribs[i].value.value.i = VA_FOURCC_P010;
                   i++;
+
+                  attribs[i].type = VASurfaceAttribPixelFormat;
+                  attribs[i].value.type = VAGenericValueTypeInteger;
+                  attribs[i].flags = VA_SURFACE_ATTRIB_GETTABLE | VA_SURFACE_ATTRIB_SETTABLE;
+                  attribs[i].value.value.i = VA_FOURCC_I010;
+                  i++;
                 }
             }
         }
@@ -6468,6 +6494,12 @@ struct {
         VA_DISPLAY_X11,
     },
 #endif
+
+    {
+        i965_gpe_table_init,
+        i965_gpe_table_terminate,
+        0,
+    },
 };
 
 static bool

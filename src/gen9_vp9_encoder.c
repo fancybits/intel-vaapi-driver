@@ -1052,7 +1052,7 @@ gen9_add_dri_buffer_2d_gpe_surface(VADriverContextP ctx,
 {
     struct i965_gpe_resource gpe_resource;
 
-    i965_gpe_dri_object_to_2d_gpe_resource(&gpe_resource, bo, width, height, pitch);
+    i965_dri_object_to_2d_gpe_resource(&gpe_resource, bo, width, height, pitch);
     gen9_add_buffer_2d_gpe_surface(ctx,
                                    gpe_context,
                                    &gpe_resource,
@@ -1087,7 +1087,7 @@ gen9_run_kernel_media_object(VADriverContextP ctx,
     mi_store_data_imm.bo = status_buffer->bo;
     mi_store_data_imm.offset = status_buffer->media_index_offset;
     mi_store_data_imm.dw0 = media_function;
-    gen9_gpe_mi_store_data_imm(ctx, batch, &mi_store_data_imm);
+    gen8_gpe_mi_store_data_imm(ctx, batch, &mi_store_data_imm);
 
     intel_batchbuffer_emit_mi_flush(batch);
     gen9_gpe_pipeline_setup(ctx, gpe_context, batch);
@@ -1126,10 +1126,10 @@ gen9_run_kernel_media_object_walker(VADriverContextP ctx,
     mi_store_data_imm.bo = status_buffer->bo;
     mi_store_data_imm.offset = status_buffer->media_index_offset;
     mi_store_data_imm.dw0 = media_function;
-    gen9_gpe_mi_store_data_imm(ctx, batch, &mi_store_data_imm);
+    gen8_gpe_mi_store_data_imm(ctx, batch, &mi_store_data_imm);
 
     gen9_gpe_pipeline_setup(ctx, gpe_context, batch);
-    gen9_gpe_media_object_walker(ctx, gpe_context, batch, param);
+    gen8_gpe_media_object_walker(ctx, gpe_context, batch, param);
     gen8_gpe_media_state_flush(ctx, gpe_context, batch);
 
     gen9_gpe_pipeline_end(ctx, gpe_context, batch);
@@ -1159,7 +1159,7 @@ void gen9_vp9_set_curbe_brc(VADriverContextP ctx,
     seq_param      = param->pseq_param;
     segment_param  = param->psegment_param;
 
-    cmd = gen8p_gpe_context_map_curbe(gpe_context);
+    cmd = i965_gpe_context_map_curbe(gpe_context);
 
     if (!cmd)
         return;
@@ -1201,8 +1201,8 @@ void gen9_vp9_set_curbe_brc(VADriverContextP ctx,
                                                   VP9_BRC_KBPS;
             cmd->dw9.min_bit_rate           = (vp9_state->min_bit_rate  + VP9_BRC_KBPS - 1) / VP9_BRC_KBPS *
                                                   VP9_BRC_KBPS;
-            cmd->dw10.frame_ratem           = vp9_state->frame_rate;
-            cmd->dw11.frame_rated           = 1;
+            cmd->dw10.frame_ratem           = vp9_state->framerate.num;
+            cmd->dw11.frame_rated           = vp9_state->framerate.den;
 
             cmd->dw14.avbr_accuracy         = 30;
             cmd->dw14.avbr_convergence      = 150;
@@ -1235,8 +1235,8 @@ void gen9_vp9_set_curbe_brc(VADriverContextP ctx,
             cmd->dw17.enable_dynamic_scaling = vp9_state->dys_in_use;
             cmd->dw17.brc_overshoot_cbr_pct = 150;
 
-            dInputBitsPerFrame = (double)(cmd->dw8.max_bit_rate) / (vp9_state->frame_rate);
-            dbps_ratio         = dInputBitsPerFrame / ((double)(vp9_state->vbv_buffer_size_in_bit) / 30);
+            dInputBitsPerFrame = (double)cmd->dw8.max_bit_rate * (double)vp9_state->framerate.den / (double)vp9_state->framerate.num;
+            dbps_ratio         = dInputBitsPerFrame / ((double)vp9_state->vbv_buffer_size_in_bit / 30.0);
             if (dbps_ratio < 0.1)
                 dbps_ratio = 0.1;
             if (dbps_ratio > 3.5)
@@ -1347,7 +1347,7 @@ void gen9_vp9_set_curbe_brc(VADriverContextP ctx,
     cmd->dw60.brc_bitstream_size_data_bti      = VP9_BTI_BRC_BITSTREAM_SIZE_G9;
     cmd->dw61.brc_hfw_data_output_bti          = VP9_BTI_BRC_HFW_DATA_G9;
 
-    gen8p_gpe_context_unmap_curbe(gpe_context);
+    i965_gpe_context_unmap_curbe(gpe_context);
     return;
 }
 
@@ -1423,7 +1423,6 @@ gen9_vp9_brc_init_reset_kernel(VADriverContextP ctx,
     brc_initreset_curbe.initbrc            = !vp9_state->brc_inited;
     brc_initreset_curbe.mbbrc_enabled      = 0;
     brc_initreset_curbe.ref_frame_flag      = vp9_state->ref_frame_flag;
-    brc_initreset_curbe.frame_rate           = vp9_state->frame_rate;
 
     vme_context->pfn_set_curbe_brc(ctx, encode_state,
                                    gpe_context,
@@ -1523,7 +1522,6 @@ gen9_vp9_brc_intra_dist_kernel(VADriverContextP ctx,
     brc_intra_dist_curbe.initbrc            = !vp9_state->brc_inited;
     brc_intra_dist_curbe.mbbrc_enabled      = 0;
     brc_intra_dist_curbe.ref_frame_flag      = vp9_state->ref_frame_flag;
-    brc_intra_dist_curbe.frame_rate           = vp9_state->frame_rate;
 
     vme_context->pfn_set_curbe_brc(ctx, encode_state,
                                    gpe_context,
@@ -1820,18 +1818,18 @@ gen9_brc_update_add_surfaces_vp9(VADriverContextP ctx,
     /* 4. Mbenc curbe input buffer */
     gen9_add_dri_buffer_gpe_surface(ctx,
                                     brc_gpe_context,
-                                    mbenc_gpe_context->dynamic_state.bo,
+                                    mbenc_gpe_context->curbe.bo,
                                     0,
-                                    ALIGN(mbenc_gpe_context->curbe_size, 64),
-                                    mbenc_gpe_context->curbe_offset,
+                                    ALIGN(mbenc_gpe_context->curbe.length, 64),
+                                    mbenc_gpe_context->curbe.offset,
                                     VP9_BTI_BRC_MBENC_CURBE_INPUT_G9);
     /* 5. Mbenc curbe output buffer */
     gen9_add_dri_buffer_gpe_surface(ctx,
                                     brc_gpe_context,
-                                    mbenc_gpe_context->dynamic_state.bo,
+                                    mbenc_gpe_context->curbe.bo,
                                     0,
-                                    ALIGN(mbenc_gpe_context->curbe_size, 64),
-                                    mbenc_gpe_context->curbe_offset,
+                                    ALIGN(mbenc_gpe_context->curbe.length, 64),
+                                    mbenc_gpe_context->curbe.offset,
                                     VP9_BTI_BRC_MBENC_CURBE_OUTPUT_G9);
 
     /* 6. BRC_PIC_STATE read buffer */
@@ -2057,7 +2055,7 @@ void gen9_vp9_set_curbe_me(VADriverContextP ctx,
     else
         enc_media_state = VP9_MEDIA_STATE_4X_ME;
 
-    me_cmd = gen8p_gpe_context_map_curbe(gpe_context);
+    me_cmd = i965_gpe_context_map_curbe(gpe_context);
 
     if (!me_cmd)
         return;
@@ -2117,7 +2115,7 @@ void gen9_vp9_set_curbe_me(VADriverContextP ctx,
     me_cmd->dw36.vme_fwd_inter_pred_surf_index       = VP9_BTI_ME_CURR_PIC_L0;
     me_cmd->dw37.vme_bdw_inter_pred_surf_index       = VP9_BTI_ME_CURR_PIC_L1;
 
-    gen8p_gpe_context_unmap_curbe(gpe_context);
+    i965_gpe_context_unmap_curbe(gpe_context);
 }
 
 static void
@@ -2398,7 +2396,7 @@ gen9_vp9_set_curbe_scaling_cm(VADriverContextP ctx,
 {
     vp9_scaling4x_curbe_data_cm *curbe_cmd;
 
-    curbe_cmd = gen8p_gpe_context_map_curbe(gpe_context);
+    curbe_cmd = i965_gpe_context_map_curbe(gpe_context);
 
     if (!curbe_cmd)
         return;
@@ -2422,7 +2420,7 @@ gen9_vp9_set_curbe_scaling_cm(VADriverContextP ctx,
         curbe_cmd->dw10.mbv_proc_stat_bti = VP9_BTI_SCALING_FRAME_MBVPROCSTATS_DST_CM;
     }
 
-    gen8p_gpe_context_unmap_curbe(gpe_context);
+    i965_gpe_context_unmap_curbe(gpe_context);
     return;
 }
 
@@ -2594,13 +2592,13 @@ gen9_vp9_dys_set_sampler_state(struct i965_gpe_context *gpe_context)
     if (!gpe_context)
         return;
 
-    dri_bo_map(gpe_context->dynamic_state.bo, 1);
+    dri_bo_map(gpe_context->sampler.bo, 1);
 
-    if (!gpe_context->dynamic_state.bo->virtual)
+    if (!gpe_context->sampler.bo->virtual)
         return;
 
     sampler_cmd = (struct gen9_sampler_8x8_avs *)
-       (gpe_context->dynamic_state.bo->virtual + gpe_context->sampler_offset);
+       (gpe_context->sampler.bo->virtual + gpe_context->sampler.offset);
 
     memset(sampler_cmd, 0, sizeof(struct gen9_sampler_8x8_avs));
 
@@ -2658,7 +2656,7 @@ gen9_vp9_dys_set_sampler_state(struct i965_gpe_context *gpe_context)
            &gen9_vp9_avs_coeffs[17 * 8],
            15 * sizeof(struct gen8_sampler_8x8_avs_coefficients));
 
-    dri_bo_unmap(gpe_context->dynamic_state.bo);
+    dri_bo_unmap(gpe_context->sampler.bo);
 }
 
 static void
@@ -2670,7 +2668,7 @@ gen9_vp9_set_curbe_dys(VADriverContextP ctx,
 {
     vp9_dys_curbe_data  *curbe_cmd;
 
-    curbe_cmd = gen8p_gpe_context_map_curbe(gpe_context);
+    curbe_cmd = i965_gpe_context_map_curbe(gpe_context);
 
     if (!curbe_cmd)
         return;
@@ -2690,7 +2688,7 @@ gen9_vp9_set_curbe_dys(VADriverContextP ctx,
     curbe_cmd->dw17.output_frame_y_bti    = VP9_BTI_DYS_OUTPUT_Y;
     curbe_cmd->dw18.avs_sample_idx            = 0;
 
-    gen8p_gpe_context_unmap_curbe(gpe_context);
+    i965_gpe_context_unmap_curbe(gpe_context);
 }
 
 static void
@@ -3023,7 +3021,7 @@ gen9_vp9_set_curbe_mbenc(VADriverContextP ctx,
         seg_param = &tmp_seg_param;
     }
 
-    curbe_cmd = gen8p_gpe_context_map_curbe(gpe_context);
+    curbe_cmd = i965_gpe_context_map_curbe(gpe_context);
 
     if (!curbe_cmd)
         return;
@@ -3167,7 +3165,7 @@ gen9_vp9_set_curbe_mbenc(VADriverContextP ctx,
     curbe_cmd->dw174.cu_record_bti               = VP9_BTI_MBENC_CU_RECORDS_G9;
     curbe_cmd->dw175.pak_data_bti                = VP9_BTI_MBENC_PAK_DATA_G9;
 
-    gen8p_gpe_context_unmap_curbe(gpe_context);
+    i965_gpe_context_unmap_curbe(gpe_context);
     return;
 }
 
@@ -3289,10 +3287,10 @@ gen9_vp9_send_mbenc_surface(VADriverContextP ctx,
 
         gen9_add_dri_buffer_gpe_surface(ctx,
                                         gpe_context,
-                                        mbenc_param->gpe_context_tx->dynamic_state.bo,
+                                        mbenc_param->gpe_context_tx->curbe.bo,
                                         0,
                                         ALIGN(res_size, 64),
-                                        mbenc_param->gpe_context_tx->curbe_offset,
+                                        mbenc_param->gpe_context_tx->curbe.offset,
                                         VP9_BTI_MBENC_TX_CURBE_G9);
 
         break;
@@ -3441,10 +3439,10 @@ gen9_vp9_send_mbenc_surface(VADriverContextP ctx,
 
         gen9_add_dri_buffer_gpe_surface(ctx,
                                         gpe_context,
-                                        mbenc_param->gpe_context_tx->dynamic_state.bo,
+                                        mbenc_param->gpe_context_tx->curbe.bo,
                                         0,
                                         ALIGN(res_size, 64),
-                                        mbenc_param->gpe_context_tx->curbe_offset,
+                                        mbenc_param->gpe_context_tx->curbe.offset,
                                         VP9_BTI_MBENC_TX_CURBE_G9);
 
 
@@ -3679,29 +3677,35 @@ gen9_vp9_mbenc_kernel(VADriverContextP ctx,
 }
 
 static void
-gen9_init_gpe_context_vp9(struct i965_gpe_context *gpe_context,
+gen9_init_gpe_context_vp9(VADriverContextP ctx,
+                          struct i965_gpe_context *gpe_context,
                           struct vp9_encoder_kernel_parameter *kernel_param)
 {
+    struct i965_driver_data *i965 = i965_driver_data(ctx);
+
     gpe_context->curbe.length = kernel_param->curbe_size; // in bytes
 
-    gpe_context->curbe_size = ALIGN(kernel_param->curbe_size, 64);
+    gpe_context->sampler.entry_size = 0;
+    gpe_context->sampler.max_entries = 0;
 
-    gpe_context->sampler_size = 0;
     if (kernel_param->sampler_size) {
-        gpe_context->sampler_size = ALIGN(kernel_param->sampler_size, 64);
+        gpe_context->sampler.entry_size = ALIGN(kernel_param->sampler_size, 64);
+        gpe_context->sampler.max_entries = 1;
     }
 
     gpe_context->idrt.entry_size = ALIGN(sizeof(struct gen8_interface_descriptor_data), 64); // 8 dws, 1 register
     gpe_context->idrt.max_entries = NUM_KERNELS_PER_GPE_CONTEXT;
-    gpe_context->idrt_size = ALIGN(sizeof(struct gen8_interface_descriptor_data), 64) *
-                                   NUM_KERNELS_PER_GPE_CONTEXT;
 
     gpe_context->surface_state_binding_table.max_entries = MAX_VP9_ENCODER_SURFACES;
     gpe_context->surface_state_binding_table.binding_table_offset = 0;
     gpe_context->surface_state_binding_table.surface_state_offset = ALIGN(MAX_VP9_ENCODER_SURFACES * 4, 64);
     gpe_context->surface_state_binding_table.length = ALIGN(MAX_VP9_ENCODER_SURFACES * 4, 64) + ALIGN(MAX_VP9_ENCODER_SURFACES * SURFACE_STATE_PADDED_SIZE_GEN9, 64);
 
-    gpe_context->vfe_state.max_num_threads = 112; // 16 EU * 7 threads
+    if (i965->intel.eu_total > 0)
+        gpe_context->vfe_state.max_num_threads = 6 * i965->intel.eu_total;
+    else
+        gpe_context->vfe_state.max_num_threads = 112; // 16 EU * 7 threads
+
     gpe_context->vfe_state.curbe_allocation_size = MAX(1, ALIGN(gpe_context->curbe.length, 32) >> 5); // in registers
     gpe_context->vfe_state.urb_entry_size = MAX(1, ALIGN(kernel_param->inline_data_size, 32) >> 5); // in registers
     gpe_context->vfe_state.num_urb_entries = (MAX_URB_SIZE -
@@ -3920,169 +3924,40 @@ gen9_encode_vp9_check_parameter(VADriverContextP ctx,
         return VA_STATUS_ERROR_UNIMPLEMENTED;
 
     if (vp9_state->brc_enabled) {
-        if (vp9_state->brc_flag_check & VP9_BRC_FAILURE) {
-            WARN_ONCE("Rate control misc_parameter is required for BRC\n");
-            return VA_STATUS_ERROR_INVALID_PARAMETER;
-        }
+        if (vp9_state->first_frame || vp9_state->picture_coding_type == KEY_FRAME) {
+            vp9_state->brc_reset = encoder_context->brc.need_reset || vp9_state->first_frame;
 
-        if (vp9_state->first_frame) {
-            unsigned int brc_flag;
-            VAEncMiscParameterBuffer *misc_param;
-
-            brc_flag = VP9_BRC_SEQ | VP9_BRC_RC;
-            if ((vp9_state->brc_flag_check & brc_flag) != brc_flag) {
-                WARN_ONCE("SPS/RC misc is required for BRC\n");
+            if (!encoder_context->brc.framerate[0].num || !encoder_context->brc.framerate[0].den ||
+                !encoder_context->brc.bits_per_second[0])
                 return VA_STATUS_ERROR_INVALID_PARAMETER;
-            }
 
-            /* check the corresponding BRC parameter for CBR and VBR */
-            if (encoder_context->rate_control_mode == VA_RC_CBR) {
-                vp9_state->target_bit_rate = seq_param->bits_per_second;
-                vp9_state->gop_size = seq_param->intra_period;
+            vp9_state->gop_size = encoder_context->brc.gop_size;
+            vp9_state->framerate = encoder_context->brc.framerate[0];
 
-                if (vp9_state->brc_flag_check & VP9_BRC_HRD) {
-                    VAEncMiscParameterHRD *misc_param_hrd;
-
-                    misc_param = (VAEncMiscParameterBuffer *)
-                        encode_state->misc_param[VAEncMiscParameterTypeHRD][0]->buffer;
-                    misc_param_hrd = (VAEncMiscParameterHRD *)misc_param->data;
-
-                    vp9_state->init_vbv_buffer_fullness_in_bit = misc_param_hrd->initial_buffer_fullness;
-                    vp9_state->vbv_buffer_size_in_bit = misc_param_hrd->buffer_size;
-                }
-
-                if (vp9_state->brc_flag_check & VP9_BRC_FR) {
-                    VAEncMiscParameterFrameRate *misc_param_fr;
-
-                    misc_param = (VAEncMiscParameterBuffer *)
-                        encode_state->misc_param[VAEncMiscParameterTypeFrameRate][0]->buffer;
-                    misc_param_fr = (VAEncMiscParameterFrameRate *)misc_param->data;
-
-                    vp9_state->frame_rate = misc_param_fr->framerate;
-                } else {
-                    /* Assign the default frame rate */
-                    vp9_state->frame_rate = 30;
-                }
-
-                /* RC misc will override HRD parameter */
-                if (vp9_state->brc_flag_check & VP9_BRC_RC) {
-                    VAEncMiscParameterRateControl *misc_param_rc;
-
-                    misc_param = (VAEncMiscParameterBuffer *)
-                        encode_state->misc_param[VAEncMiscParameterTypeRateControl][0]->buffer;
-                    misc_param_rc = (VAEncMiscParameterRateControl *)misc_param->data;
-
-                    vp9_state->target_bit_rate = misc_param_rc->bits_per_second;
-                    vp9_state->vbv_buffer_size_in_bit = (misc_param_rc->bits_per_second / 1000) *
-                                                 misc_param_rc->window_size;
-                    vp9_state->init_vbv_buffer_fullness_in_bit = vp9_state->vbv_buffer_size_in_bit / 2;
-                    vp9_state->window_size = misc_param_rc->window_size;
-                }
+            if (encoder_context->rate_control_mode == VA_RC_CBR ||
+                !encoder_context->brc.target_percentage[0]) {
+                vp9_state->target_bit_rate = encoder_context->brc.bits_per_second[0];
                 vp9_state->max_bit_rate = vp9_state->target_bit_rate;
                 vp9_state->min_bit_rate = vp9_state->target_bit_rate;
             } else {
-                /* VBR mode */
-                brc_flag = VP9_BRC_SEQ | VP9_BRC_RC;
-                vp9_state->target_bit_rate = seq_param->bits_per_second;
-                vp9_state->gop_size = seq_param->intra_period;
-
-                if (vp9_state->brc_flag_check & VP9_BRC_FR) {
-                    VAEncMiscParameterFrameRate *misc_param_fr;
-
-                    misc_param = (VAEncMiscParameterBuffer *)
-                        encode_state->misc_param[VAEncMiscParameterTypeFrameRate][0]->buffer;
-                    misc_param_fr = (VAEncMiscParameterFrameRate *)misc_param->data;
-
-                    vp9_state->frame_rate = misc_param_fr->framerate;
-                } else {
-                    /* Assign the default frame rate */
-                    vp9_state->frame_rate = 30;
-                }
-
-                if (vp9_state->brc_flag_check & VP9_BRC_RC) {
-                    VAEncMiscParameterRateControl *misc_param_rc;
-
-                    misc_param = (VAEncMiscParameterBuffer *)
-                        encode_state->misc_param[VAEncMiscParameterTypeRateControl][0]->buffer;
-                    misc_param_rc = (VAEncMiscParameterRateControl *)misc_param->data;
-
-                    vp9_state->max_bit_rate = misc_param_rc->bits_per_second;
-                    vp9_state->vbv_buffer_size_in_bit = (misc_param_rc->bits_per_second / 1000) *
-                                                 misc_param_rc->window_size;
-                    vp9_state->init_vbv_buffer_fullness_in_bit = vp9_state->vbv_buffer_size_in_bit / 2;
-                    vp9_state->target_bit_rate = (misc_param_rc->bits_per_second / 100) *
-                                misc_param_rc->target_percentage;
-                    vp9_state->min_bit_rate = (misc_param_rc->bits_per_second / 100) *
-                         (2 * misc_param_rc->target_percentage - 100);
-                    vp9_state->target_percentage = misc_param_rc->target_percentage;
-                    vp9_state->window_size = misc_param_rc->window_size;
-                }
-            }
-        }
-        else if (vp9_state->picture_coding_type == KEY_FRAME){
-            VAEncMiscParameterBuffer *misc_param;
-            /* update the BRC parameter only when it is key-frame */
-            /* If the parameter related with RC is changed. Reset BRC */
-            if (vp9_state->brc_flag_check & VP9_BRC_FR) {
-               VAEncMiscParameterFrameRate *misc_param_fr;
-
-               misc_param = (VAEncMiscParameterBuffer *)
-                   encode_state->misc_param[VAEncMiscParameterTypeFrameRate][0]->buffer;
-               misc_param_fr = (VAEncMiscParameterFrameRate *)misc_param->data;
-
-               if (vp9_state->frame_rate != misc_param_fr->framerate) {
-                   vp9_state->brc_reset = 1;
-                   vp9_state->frame_rate = misc_param_fr->framerate;
-               }
+                vp9_state->max_bit_rate = encoder_context->brc.bits_per_second[0];
+                vp9_state->target_bit_rate = vp9_state->max_bit_rate * encoder_context->brc.target_percentage[0] / 100;
+                if (2 * vp9_state->target_bit_rate < vp9_state->max_bit_rate)
+                    vp9_state->min_bit_rate = 0;
+                else
+                    vp9_state->min_bit_rate = 2 * vp9_state->target_bit_rate - vp9_state->max_bit_rate;
             }
 
-            /* check the GOP size. And bit_per_second in SPS is ignored */
-            if (vp9_state->brc_flag_check & VP9_BRC_SEQ) {
-                if (vp9_state->gop_size != seq_param->intra_period) {
-                    vp9_state->brc_reset = 1;
-                    vp9_state->gop_size = seq_param->intra_period;
-                }
-            }
-
-            /* update the bit_per_second */
-            if (vp9_state->brc_flag_check & VP9_BRC_RC) {
-                VAEncMiscParameterRateControl *misc_param_rc;
-
-                misc_param = (VAEncMiscParameterBuffer *)
-                    encode_state->misc_param[VAEncMiscParameterTypeRateControl][0]->buffer;
-                misc_param_rc = (VAEncMiscParameterRateControl *)misc_param->data;
-
-                if (encoder_context->rate_control_mode == VA_RC_CBR) {
-                    if (vp9_state->target_bit_rate != misc_param_rc->bits_per_second ||
-                        vp9_state->window_size != misc_param_rc->window_size) {
-                        vp9_state->target_bit_rate = misc_param_rc->bits_per_second;
-                        vp9_state->vbv_buffer_size_in_bit = (misc_param_rc->bits_per_second / 1000) *
-                                                 misc_param_rc->window_size;
-                        vp9_state->init_vbv_buffer_fullness_in_bit = vp9_state->vbv_buffer_size_in_bit * 2;
-                        vp9_state->window_size = misc_param_rc->window_size;
-                        vp9_state->max_bit_rate = vp9_state->target_bit_rate;
-                        vp9_state->min_bit_rate = vp9_state->target_bit_rate;
-                        vp9_state->brc_reset = 1;
-                    }
-                } else {
-                    /* VBR mode */
-                    if (vp9_state->max_bit_rate != misc_param_rc->bits_per_second ||
-                        vp9_state->target_percentage != misc_param_rc->target_percentage) {
-
-                        vp9_state->target_bit_rate = (misc_param_rc->bits_per_second / 100) *
-                                misc_param_rc->target_percentage;
-                        vp9_state->min_bit_rate = (misc_param_rc->bits_per_second / 100) *
-                             (2 * misc_param_rc->target_percentage - 100);
-                        vp9_state->max_bit_rate = misc_param_rc->bits_per_second;
-                        vp9_state->vbv_buffer_size_in_bit = (misc_param_rc->bits_per_second / 1000) *
-                                                 misc_param_rc->window_size;
-                        vp9_state->init_vbv_buffer_fullness_in_bit = vp9_state->vbv_buffer_size_in_bit / 2;
-                        vp9_state->target_percentage = misc_param_rc->target_percentage;
-                        vp9_state->window_size = misc_param_rc->window_size;
-                        vp9_state->brc_reset = 1;
-                    }
-                }
-            }
+            if (encoder_context->brc.hrd_buffer_size)
+                vp9_state->vbv_buffer_size_in_bit = encoder_context->brc.hrd_buffer_size;
+            else if (encoder_context->brc.window_size)
+                vp9_state->vbv_buffer_size_in_bit = (uint64_t)vp9_state->max_bit_rate * encoder_context->brc.window_size / 1000;
+            else
+                vp9_state->vbv_buffer_size_in_bit = vp9_state->max_bit_rate;
+            if (encoder_context->brc.hrd_initial_buffer_fullness)
+                vp9_state->init_vbv_buffer_fullness_in_bit = encoder_context->brc.hrd_initial_buffer_fullness;
+            else
+                vp9_state->init_vbv_buffer_fullness_in_bit = vp9_state->vbv_buffer_size_in_bit / 2;
         }
     }
 
@@ -4607,7 +4482,7 @@ gen9_vme_scaling_context_init_vp9(VADriverContextP ctx,
     scoreboard_param.walkpat_flag = 0;
 
     gpe_context = &scaling_context->gpe_contexts[0];
-    gen9_init_gpe_context_vp9(gpe_context, &kernel_param);
+    gen9_init_gpe_context_vp9(ctx, gpe_context, &kernel_param);
     gen9_init_vfe_scoreboard_vp9(gpe_context, &scoreboard_param);
 
     scaling_context->scaling_4x_bti.scaling_frame_src_y = VP9_BTI_SCALING_FRAME_SRC_Y;
@@ -4633,7 +4508,7 @@ gen9_vme_scaling_context_init_vp9(VADriverContextP ctx,
     kernel_param.sampler_size = 0;
 
     gpe_context = &scaling_context->gpe_contexts[1];
-    gen9_init_gpe_context_vp9(gpe_context, &kernel_param);
+    gen9_init_gpe_context_vp9(ctx, gpe_context, &kernel_param);
     gen9_init_vfe_scoreboard_vp9(gpe_context, &scoreboard_param);
 
     memset(&scale_kernel, 0, sizeof(scale_kernel));
@@ -4675,7 +4550,7 @@ gen9_vme_me_context_init_vp9(VADriverContextP ctx,
     scoreboard_param.walkpat_flag = 0;
 
     gpe_context = &me_context->gpe_context;
-    gen9_init_gpe_context_vp9(gpe_context, &kernel_param);
+    gen9_init_gpe_context_vp9(ctx, gpe_context, &kernel_param);
     gen9_init_vfe_scoreboard_vp9(gpe_context, &scoreboard_param);
 
     memset(&scale_kernel, 0, sizeof(scale_kernel));
@@ -4723,7 +4598,7 @@ gen9_vme_mbenc_context_init_vp9(VADriverContextP ctx,
         } else
             scoreboard_param.walkpat_flag = 0;
 
-        gen9_init_gpe_context_vp9(gpe_context, &kernel_param);
+        gen9_init_gpe_context_vp9(ctx, gpe_context, &kernel_param);
         gen9_init_vfe_scoreboard_vp9(gpe_context, &scoreboard_param);
 
         memset(&scale_kernel, 0, sizeof(scale_kernel));
@@ -4763,7 +4638,7 @@ gen9_vme_brc_context_init_vp9(VADriverContextP ctx,
 
     for (i = 0; i < NUM_VP9_BRC; i++) {
         gpe_context = &brc_context->gpe_contexts[i];
-        gen9_init_gpe_context_vp9(gpe_context, &kernel_param);
+        gen9_init_gpe_context_vp9(ctx, gpe_context, &kernel_param);
         gen9_init_vfe_scoreboard_vp9(gpe_context, &scoreboard_param);
 
         memset(&scale_kernel, 0, sizeof(scale_kernel));
@@ -4802,7 +4677,7 @@ gen9_vme_dys_context_init_vp9(VADriverContextP ctx,
     scoreboard_param.walkpat_flag = 0;
 
     gpe_context = &dys_context->gpe_context;
-    gen9_init_gpe_context_vp9(gpe_context, &kernel_param);
+    gen9_init_gpe_context_vp9(ctx, gpe_context, &kernel_param);
     gen9_init_vfe_scoreboard_vp9(gpe_context, &scoreboard_param);
 
     memset(&scale_kernel, 0, sizeof(scale_kernel));
@@ -5069,6 +4944,7 @@ gen9_pak_vp9_pipe_buf_addr_state(VADriverContextP ctx,
                                  struct encode_state *encode_state,
                                  struct intel_encoder_context *encoder_context)
 {
+    struct i965_driver_data *i965 = i965_driver_data(ctx);
     struct intel_batchbuffer *batch = encoder_context->base.batch;
     struct gen9_encoder_context_vp9 *pak_context = encoder_context->mfc_context;
     struct gen9_vp9_state *vp9_state;
@@ -5093,49 +4969,49 @@ gen9_pak_vp9_pipe_buf_addr_state(VADriverContextP ctx,
                 obj_surface->bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 4..6 deblocking line */
     OUT_RELOC64(batch,
                 pak_context->res_deblocking_filter_line_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 7..9 deblocking tile line */
     OUT_RELOC64(batch,
                 pak_context->res_deblocking_filter_tile_line_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 10..12 deblocking tile col */
     OUT_RELOC64(batch,
                 pak_context->res_deblocking_filter_tile_col_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 13..15 metadata line */
     OUT_RELOC64(batch,
                 pak_context->res_metadata_line_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 16..18 metadata tile line */
     OUT_RELOC64(batch,
                 pak_context->res_metadata_tile_line_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 19..21 metadata tile col */
     OUT_RELOC64(batch,
                 pak_context->res_metadata_tile_col_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 22..30 SAO is not used for VP9 */
     OUT_BCS_BATCH(batch, 0);
@@ -5153,7 +5029,7 @@ gen9_pak_vp9_pipe_buf_addr_state(VADriverContextP ctx,
                 pak_context->res_mv_temporal_buffer[vp9_state->curr_mv_temporal_index].bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 34..36 Not used */
     OUT_BCS_BATCH(batch, 0);
@@ -5183,14 +5059,14 @@ gen9_pak_vp9_pipe_buf_addr_state(VADriverContextP ctx,
         OUT_BCS_BATCH(batch, 0);
     }
 
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 54..56 for source input */
     OUT_RELOC64(batch,
                 pak_context->uncompressed_picture_source.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, 0,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 57..59 StreamOut is not used */
     OUT_BCS_BATCH(batch, 0);
@@ -5223,7 +5099,7 @@ gen9_pak_vp9_pipe_buf_addr_state(VADriverContextP ctx,
         OUT_BCS_BATCH(batch, 0);
         OUT_BCS_BATCH(batch, 0);
     }
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 83..85 VP9 prob buffer */
     OUT_RELOC64(batch,
@@ -5231,7 +5107,7 @@ gen9_pak_vp9_pipe_buf_addr_state(VADriverContextP ctx,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
 
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 86..88 Segment id buffer */
     if (pak_context->res_segmentid_buffer.bo) {
@@ -5243,21 +5119,21 @@ gen9_pak_vp9_pipe_buf_addr_state(VADriverContextP ctx,
         OUT_BCS_BATCH(batch, 0);
         OUT_BCS_BATCH(batch, 0);
     }
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 89..91 HVD line rowstore buffer */
     OUT_RELOC64(batch,
                 pak_context->res_hvd_line_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 92..94 HVD tile line rowstore buffer */
     OUT_RELOC64(batch,
                 pak_context->res_hvd_tile_line_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 95..97 SAO streamout. Not used for VP9 */
     OUT_BCS_BATCH(batch, 0);
@@ -5282,6 +5158,7 @@ gen9_pak_vp9_ind_obj_base_addr_state(VADriverContextP ctx,
                                      struct encode_state *encode_state,
                                      struct intel_encoder_context *encoder_context)
 {
+    struct i965_driver_data *i965 = i965_driver_data(ctx);
     struct intel_batchbuffer *batch = encoder_context->base.batch;
     struct gen9_encoder_context_vp9 *pak_context = encoder_context->mfc_context;
     struct gen9_vp9_state *vp9_state;
@@ -5307,14 +5184,14 @@ gen9_pak_vp9_ind_obj_base_addr_state(VADriverContextP ctx,
                 I915_GEM_DOMAIN_INSTRUCTION, 0,   /* No write domain */
                 vp9_state->mb_data_offset);
     /* default attribute */
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 9..11, PAK-BSE */
     OUT_RELOC64(batch,
                   pak_context->indirect_pak_bse_object.bo,
                   I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                   pak_context->indirect_pak_bse_object.offset);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 12..13 upper bound */
     OUT_RELOC64(batch,
@@ -5327,35 +5204,35 @@ gen9_pak_vp9_ind_obj_base_addr_state(VADriverContextP ctx,
                 pak_context->res_compressed_input_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, 0,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 17..19 prob counter streamout */
     OUT_RELOC64(batch,
                 pak_context->res_prob_counter_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 20..22 prob delta streamin */
     OUT_RELOC64(batch,
                 pak_context->res_prob_delta_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 23..25 Tile record streamout */
     OUT_RELOC64(batch,
                 pak_context->res_tile_record_streamout_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     /* DW 26..28 CU record streamout */
     OUT_RELOC64(batch,
                 pak_context->res_cu_stat_streamout_buffer.bo,
                 I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION,
                 0);
-    OUT_BCS_BATCH(batch, 0);
+    OUT_BCS_BATCH(batch, i965->intel.mocs_state);
 
     ADVANCE_BCS_BATCH(batch);
 }
@@ -5623,7 +5500,7 @@ gen9_vp9_pak_picture_level(VADriverContextP ctx,
     second_level_batch.is_second_level = 1;
     second_level_batch.bo = pak_context->res_pic_state_brc_write_hfw_read_buffer.bo;
 
-    gen9_gpe_mi_batch_buffer_start(ctx, batch, &second_level_batch);
+    gen8_gpe_mi_batch_buffer_start(ctx, batch, &second_level_batch);
 
     if (pic_param->pic_flags.bits.segmentation_enabled &&
         seg_param)
@@ -5645,13 +5522,13 @@ gen9_vp9_pak_picture_level(VADriverContextP ctx,
     second_level_batch.offset = 0;
     second_level_batch.bo = pak_context->res_pak_uncompressed_input_buffer.bo;
 
-    gen9_gpe_mi_batch_buffer_start(ctx, batch, &second_level_batch);
+    gen8_gpe_mi_batch_buffer_start(ctx, batch, &second_level_batch);
 
     /* PAK_OBJECT */
     second_level_batch.is_second_level = 1;
     second_level_batch.offset = 0;
     second_level_batch.bo = pak_context->res_mb_code_surface.bo;
-    gen9_gpe_mi_batch_buffer_start(ctx, batch, &second_level_batch);
+    gen8_gpe_mi_batch_buffer_start(ctx, batch, &second_level_batch);
 
     return;
 }
@@ -5674,39 +5551,39 @@ gen9_vp9_read_mfc_status(VADriverContextP ctx, struct intel_encoder_context *enc
     status_buffer = &(vp9_state->status_buffer);
 
     memset(&mi_flush_dw_param, 0, sizeof(mi_flush_dw_param));
-    gen9_gpe_mi_flush_dw(ctx, batch, &mi_flush_dw_param);
+    gen8_gpe_mi_flush_dw(ctx, batch, &mi_flush_dw_param);
 
     memset(&mi_store_reg_mem_param, 0, sizeof(mi_store_reg_mem_param));
     mi_store_reg_mem_param.bo = status_buffer->bo;
     mi_store_reg_mem_param.offset = status_buffer->bs_byte_count_offset;
     mi_store_reg_mem_param.mmio_offset = status_buffer->vp9_bs_frame_reg_offset;
-    gen9_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
+    gen8_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
 
     mi_store_reg_mem_param.bo = pak_context->res_brc_bitstream_size_buffer.bo;
     mi_store_reg_mem_param.offset = 0;
     mi_store_reg_mem_param.mmio_offset = status_buffer->vp9_bs_frame_reg_offset;
-    gen9_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
+    gen8_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
 
     /* Read HCP Image status */
     mi_store_reg_mem_param.bo = status_buffer->bo;
     mi_store_reg_mem_param.offset = status_buffer->image_status_mask_offset;
     mi_store_reg_mem_param.mmio_offset =
                                status_buffer->vp9_image_mask_reg_offset;
-    gen9_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
+    gen8_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
 
     mi_store_reg_mem_param.bo = status_buffer->bo;
     mi_store_reg_mem_param.offset = status_buffer->image_status_ctrl_offset;
     mi_store_reg_mem_param.mmio_offset =
                                status_buffer->vp9_image_ctrl_reg_offset;
-    gen9_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
+    gen8_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
 
     mi_store_reg_mem_param.bo = pak_context->res_brc_bitstream_size_buffer.bo;
     mi_store_reg_mem_param.offset = 4;
     mi_store_reg_mem_param.mmio_offset =
                                status_buffer->vp9_image_ctrl_reg_offset;
-    gen9_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
+    gen8_gpe_mi_store_register_mem(ctx, batch, &mi_store_reg_mem_param);
 
-    gen9_gpe_mi_flush_dw(ctx, batch, &mi_flush_dw_param);
+    gen8_gpe_mi_flush_dw(ctx, batch, &mi_flush_dw_param);
 
     return;
 }
@@ -5735,6 +5612,8 @@ gen9_vp9_pak_pipeline_prepare(VADriverContextP ctx,
     /* reconstructed surface */
     obj_surface = encode_state->reconstructed_object;
     i965_check_alloc_surface_bo(ctx, obj_surface, 1, VA_FOURCC_NV12, SUBSAMPLE_YUV420);
+
+    dri_bo_unreference(pak_context->reconstructed_object.bo);
 
     pak_context->reconstructed_object.bo = obj_surface->bo;
     dri_bo_reference(pak_context->reconstructed_object.bo);
@@ -5799,47 +5678,6 @@ static void
 gen9_vp9_pak_brc_prepare(struct encode_state *encode_state,
                           struct intel_encoder_context *encoder_context)
 {
-    struct gen9_encoder_context_vp9 *pak_context = encoder_context->mfc_context;
-    struct gen9_vp9_state *vp9_state;
-
-    vp9_state = (struct gen9_vp9_state *)(encoder_context->enc_priv_state);
-
-    if (!vp9_state || !pak_context)
-        return;
-
-    if (vp9_state->brc_enabled) {
-        /* check the buffer related with BRC */
-        vp9_state->brc_flag_check = 0;
-        if (encode_state->seq_param_ext && encode_state->seq_param_ext->buffer) {
-            vp9_state->brc_flag_check |= VP9_BRC_SEQ;
-        }
-
-        /* Frame_rate */
-        if (encode_state->misc_param[VAEncMiscParameterTypeFrameRate][0] &&
-            encode_state->misc_param[VAEncMiscParameterTypeFrameRate][0]->buffer) {
-            vp9_state->brc_flag_check |= VP9_BRC_FR;
-        }
-
-        /* HRD */
-        if (encode_state->misc_param[VAEncMiscParameterTypeRateControl][0] &&
-            encode_state->misc_param[VAEncMiscParameterTypeRateControl][0]->buffer) {
-            vp9_state->brc_flag_check |= VP9_BRC_RC;
-        }
-
-        if (encode_state->misc_param[VAEncMiscParameterTypeHRD][0] &&
-            encode_state->misc_param[VAEncMiscParameterTypeHRD][0]->buffer) {
-            vp9_state->brc_flag_check |= VP9_BRC_HRD;
-        }
-
-        /*
-         * If user-app doesn't pass the buffer related with BRC for the first
-         * frame, the error flag is returned.
-         */
-        if (vp9_state->brc_flag_check == 0 && vp9_state->first_frame) {
-            vp9_state->brc_flag_check |= VP9_BRC_FAILURE;
-        }
-    }
-    return;
 }
 
 static void
@@ -5915,7 +5753,7 @@ gen9_vp9_pak_pipeline(VADriverContextP ctx,
             memset(&mi_load_reg_imm, 0, sizeof(mi_load_reg_imm));
             mi_load_reg_imm.mmio_offset = status_buffer->vp9_image_ctrl_reg_offset;
             mi_load_reg_imm.data = 0;
-            gen9_gpe_mi_load_register_imm(ctx, batch, &mi_load_reg_imm);
+            gen8_gpe_mi_load_register_imm(ctx, batch, &mi_load_reg_imm);
         }
         gen9_vp9_pak_picture_level(ctx, encode_state, encoder_context);
         gen9_vp9_read_mfc_status(ctx, encoder_context);
