@@ -1,6 +1,5 @@
 [![Stories in Ready](https://badge.waffle.io/01org/intel-vaapi-driver.png?label=ready&title=Ready)](http://waffle.io/01org/intel-vaapi-driver)
 [![Build Status](https://travis-ci.org/01org/intel-vaapi-driver.svg?branch=master)](https://travis-ci.org/01org/intel-vaapi-driver)
-[![Coverage Status](https://coveralls.io/repos/github/01org/intel-vaapi-driver/badge.svg?branch=master)](https://coveralls.io/github/01org/intel-vaapi-driver?branch=master)
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/11612/badge.svg)](https://scan.coverity.com/projects/01org-intel-vaapi-driver)
 
 #Intel-vaapi-driver Project
@@ -30,3 +29,10 @@ We would love to help you start contributing!
 The intel vaapi media development team can be reached via our [mailing
 list](https://lists.01.org/mailman/listinfo/intel-vaapi-media) and on IRC
 in channel ##intel-media on [Freenode](https://freenode.net/kb/answer/chat).
+
+We also use [#Slack](https://slack.com) and host [VAAPI Media Slack
+Team](https://intel-media.slack.com).  You can signup by submitting your email
+address to our [Slack Team invite page](https://slack-join-intel-media.herokuapp.com).
+
+Slack complements our other means of communication.  Pick the one that works
+best for you!

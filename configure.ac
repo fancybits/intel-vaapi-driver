@@ -1,36 +1,42 @@
-# intel-driver package version number
-m4_define([intel_driver_major_version], [1])
-m4_define([intel_driver_minor_version], [8])
-m4_define([intel_driver_micro_version], [0])
-m4_define([intel_driver_pre_version],   [1])
-m4_define([intel_driver_version],
-          [intel_driver_major_version.intel_driver_minor_version.intel_driver_micro_version])
-m4_if(intel_driver_pre_version, [0], [], [
-m4_append([intel_driver_version], intel_driver_pre_version, [.pre])
+# intel-vaapi-driver package version number
+m4_define([intel_vaapi_driver_major_version], [2])
+m4_define([intel_vaapi_driver_minor_version], [0])
+m4_define([intel_vaapi_driver_micro_version], [0])
+m4_define([intel_vaapi_driver_pre_version],   [0])
+m4_define([intel_vaapi_driver_version],
+          [intel_vaapi_driver_major_version.intel_vaapi_driver_minor_version.intel_vaapi_driver_micro_version])
+m4_if(intel_vaapi_driver_pre_version, [0], [], [
+m4_append([intel_vaapi_driver_version], intel_vaapi_driver_pre_version, [.pre])
 ])
 
 # libva minimum version requirement
-m4_define([va_api_version], [0.39.4])
-m4_define([libva_package_version], [1.7.3])
+m4_define([va_api_version], [1.0.0])
 
 # libdrm minimum version requirement
 m4_define([libdrm_version], [2.4.52])
 
+# Wayland minimum version requirement
+# 1.11.0 for wl_proxy_create_wrapper
+m4_define([wayland_api_version], [1.11.0])
+
 AC_PREREQ([2.57])
-AC_INIT([intel_driver], [intel_driver_version], [haihao.xiang@intel.com],
-        [libva-intel-driver])
+AC_INIT([intel_vaapi_driver],
+        [intel_vaapi_driver_version],
+        [https://github.com/01org/intel-vaapi-driver/issues/new],
+        [intel-vaapi-driver],
+        [https://github.com/01org/intel-vaapi-driver])
 AC_CONFIG_SRCDIR([Makefile.am])
 AM_INIT_AUTOMAKE([1.9 tar-ustar])
 
 AC_CONFIG_HEADERS([src/config.h])
 
-INTEL_DRIVER_MAJOR_VERSION=intel_driver_major_version
-INTEL_DRIVER_MINOR_VERSION=intel_driver_minor_version
-INTEL_DRIVER_MICRO_VERSION=intel_driver_micro_version
-AC_DEFINE([INTEL_DRIVER_MAJOR_VERSION], [intel_driver_major_version], [Major version of the driver])
-AC_DEFINE([INTEL_DRIVER_MINOR_VERSION], [intel_driver_minor_version], [Minor version of the driver])
-AC_DEFINE([INTEL_DRIVER_MICRO_VERSION], [intel_driver_micro_version], [Micro version of the driver])
-AC_DEFINE([INTEL_DRIVER_PRE_VERSION], [intel_driver_pre_version], [Preversion of the driver])
+INTEL_DRIVER_MAJOR_VERSION=intel_vaapi_driver_major_version
+INTEL_DRIVER_MINOR_VERSION=intel_vaapi_driver_minor_version
+INTEL_DRIVER_MICRO_VERSION=intel_vaapi_driver_micro_version
+AC_DEFINE([INTEL_DRIVER_MAJOR_VERSION], [intel_vaapi_driver_major_version], [Major version of the driver])
+AC_DEFINE([INTEL_DRIVER_MINOR_VERSION], [intel_vaapi_driver_minor_version], [Minor version of the driver])
+AC_DEFINE([INTEL_DRIVER_MICRO_VERSION], [intel_vaapi_driver_micro_version], [Micro version of the driver])
+AC_DEFINE([INTEL_DRIVER_PRE_VERSION], [intel_vaapi_driver_pre_version], [Preversion of the driver])
 
 INTEL_DRIVER_LT_LDFLAGS="-avoid-version"
 AC_SUBST(INTEL_DRIVER_LT_LDFLAGS)
@@ -139,6 +145,15 @@ AC_DEFINE_UNQUOTED([VA_DRIVER_INIT_FUNC], [$VA_DRIVER_INIT_FUNC],
 
 dnl Check for VA/DRM API
 USE_X11="$enable_x11"
+
+dnl Check for X11
+if test "$enable_x11" = "yes"; then
+    USE_X11="yes"
+    PKG_CHECK_MODULES([X11],    [x11],    [:], [USE_X11="no"])
+    PKG_CHECK_MODULES([XEXT],   [xext],   [:], [USE_X11="no"])
+    PKG_CHECK_MODULES([XFIXES], [xfixes], [:], [USE_X11="no"])
+fi
+
 if test "$USE_X11" = "yes"; then
     PKG_CHECK_MODULES(LIBVA_X11_DEPS, [libva-x11],
       [AC_DEFINE([HAVE_VA_X11], [1], [Defined to 1 if VA/X11 API is enabled])],
@@ -185,6 +200,8 @@ if test "$enable_wayland" = "yes"; then
 
     if test "$USE_WAYLAND" = "yes"; then
 
+        PKG_CHECK_MODULES([WAYLAND_CLIENT], [wayland-client >= wayland_api_version],
+        [INCLUDES="$INCLUDES $WAYLAND_CLIENT_CFLAGS"], [:])
         WAYLAND_PREFIX=`$PKG_CONFIG --variable=prefix wayland-client`
         AC_PATH_PROG([WAYLAND_SCANNER], [wayland-scanner],,
                      [${WAYLAND_PREFIX}/bin$PATH_SEPARATOR$PATH])
@@ -197,9 +214,11 @@ AM_CONDITIONAL(USE_WAYLAND, test "$USE_WAYLAND" = "yes")
 
 AC_OUTPUT([
     Makefile
-    debian.upstream/Makefile 
     src/Makefile
     src/shaders/Makefile
+    src/shaders/brc/Makefile
+    src/shaders/brc/bsw/Makefile
+    src/shaders/brc/skl/Makefile
     src/shaders/h264/Makefile
     src/shaders/h264/ildb/Makefile
     src/shaders/h264/mc/Makefile

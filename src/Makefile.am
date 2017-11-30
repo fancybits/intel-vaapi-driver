@@ -48,115 +48,7 @@ driver_libs = \
 	$(DRM_LIBS) -ldrm_intel	\
 	$(NULL)
 
-source_c = \
-	dso_utils.c		\
-	gen6_mfc.c		\
-	gen6_mfc_common.c	\
-	gen6_mfd.c		\
-	gen6_vme.c		\
-	gen7_vme.c		\
-	gen7_mfc.c		\
-	gen7_mfd.c		\
-	gen75_mfd.c		\
-	gen75_mfc.c		\
-	gen8_mfc.c		\
-	gen8_mfd.c		\
-	gen8_vme.c		\
-	gen9_vme.c		\
-	gen9_mfc.c		\
-	gen9_mfc_hevc.c		\
-	gen9_mfd.c		\
-	gen9_vdenc.c		\
-	gen75_picture_process.c	\
-	gen75_vme.c		\
-	gen75_vpp_gpe.c  	\
-	gen75_vpp_vebox.c	\
-	gen9_post_processing.c	\
-	i965_avc_bsd.c		\
-	i965_avc_hw_scoreboard.c\
-	i965_avc_ildb.c		\
-	i965_decoder_utils.c	\
-	i965_device_info.c	\
-	i965_drv_video.c	\
-	i965_encoder.c		\
-	i965_encoder_utils.c	\
-	i965_media.c		\
-	i965_media_h264.c	\
-	i965_media_mpeg2.c	\
-	i965_gpe_utils.c	\
-	i965_post_processing.c	\
-	i965_yuv_coefs.c	\
-	gen8_post_processing.c	\
-	i965_render.c		\
-	i965_vpp_avs.c		\
-	gen8_render.c		\
-	gen9_render.c		\
-	intel_batchbuffer.c	\
-	intel_batchbuffer_dump.c\
-	intel_driver.c		\
-	intel_memman.c		\
-	object_heap.c		\
-	intel_media_common.c		\
-	vp9_probs.c             \
-	gen9_vp9_encoder_kernels.c      \
-	gen9_vp9_const_def.c      \
-	gen9_vp9_encoder.c      \
-	intel_common_vpp_internal.c           \
-	$(NULL)
-
-source_h = \
-	dso_utils.h		\
-	gen6_mfc.h		\
-	gen6_mfd.h		\
-	gen6_vme.h		\
-	gen7_mfd.h		\
-	gen75_picture_process.h	\
-	gen75_vpp_gpe.h 	\
-	gen75_vpp_vebox.h	\
-	gen8_post_processing.h	\
-	gen9_mfd.h		\
-	gen9_mfc.h		\
-	gen9_vdenc.h		\
-	i965_avc_bsd.h		\
-	i965_avc_hw_scoreboard.h\
-	i965_avc_ildb.h		\
-	i965_decoder.h		\
-	i965_decoder_utils.h	\
-	i965_defines.h          \
-	i965_drv_video.h        \
-	i965_encoder.h		\
-	i965_encoder_utils.h	\
-	i965_media.h            \
-	i965_media_h264.h	\
-	i965_media_mpeg2.h      \
-	i965_mutext.h		\
-	i965_gpe_utils.h	\
-	i965_pciids.h		\
-	i965_post_processing.h	\
-	i965_render.h           \
-	i965_structs.h		\
-	i965_vpp_avs.h		\
-	i965_yuv_coefs.h	\
-	intel_batchbuffer.h     \
-	intel_batchbuffer_dump.h\
-	intel_compiler.h	\
-	intel_driver.h          \
-	intel_media.h           \
-	intel_memman.h          \
-	intel_version.h		\
-	object_heap.h           \
-	vp8_probs.h             \
-	vp9_probs.h             \
-	sysdeps.h		\
-	va_backend_compat.h	\
-	i965_fourcc.h           \
-	gen9_vp9_encoder.h           \
-	gen9_vp9_encapi.h           \
-	gen9_vp9_const_def.h      \
-	gen9_vp9_encoder_kernels.h           \
-	intel_gen_vppapi.h           \
-	intel_common_vpp_internal.h           \
-	$(NULL)
+include Makefile.sources
 
 # convenience library that can be linked by driver and tests
 noinst_LTLIBRARIES		= libi965_drv_video.la
@@ -184,7 +76,7 @@ if USE_WAYLAND
 source_c			+= i965_output_wayland.c
 source_h			+= i965_output_wayland.h
 source_h			+= $(protocol_source_h)
-driver_cflags			+= $(WAYLAND_CFLAGS)
+driver_cflags			+= $(WAYLAND_CFLAGS) $(WAYLAND_CLIENT_CFLAGS)
 endif
 
 # git version
@@ -219,14 +111,20 @@ BUILT_SOURCES	+= intel_version.h
 EXTRA_DIST	+= Android.mk intel_version.h.in $(PKG_VERSION_FILE)
 
 # Wayland protocol
+if USE_WAYLAND
 protocol_source_h = wayland-drm-client-protocol.h
 i965_output_wayland.c: $(protocol_source_h)
 %-client-protocol.h : %.xml
 	$(AM_V_GEN)$(WAYLAND_SCANNER) client-header < $< > $@
 
+BUILT_SOURCES += $(protocol_source_h)
+endif
+
 EXTRA_DIST += \
 	wayland-drm.xml         \
 	$(NULL)
+
+CLEANFILES = $(BUILT_SOURCES)
 
 # Extra clean files so that maintainer-clean removes *everything*
 MAINTAINERCLEANFILES = Makefile.in config.h.in

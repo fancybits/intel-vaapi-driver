@@ -8,11 +8,11 @@
  * distribute, sub license, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
@@ -25,7 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <assert.h>
 #include <va/va_backend.h>
 #include <va/va_backend_wayland.h>
 #include <wayland-client.h>
@@ -36,37 +35,52 @@
 #include "i965_defines.h"
 #include "dso_utils.h"
 
-#define LIBEGL_NAME             "libEGL.so.1"
+/* We need mesa's libEGL, first try the soname of a glvnd enabled mesa build */
+#define LIBEGL_NAME             "libEGL_mesa.so.0"
+/* Then fallback to plain libEGL.so.1 (which might not be mesa) */
+#define LIBEGL_NAME_FALLBACK    "libEGL.so.1"
 #define LIBWAYLAND_CLIENT_NAME  "libwayland-client.so.0"
 
 typedef uint32_t (*wl_display_get_global_func)(struct wl_display *display,
-    const char *interface, uint32_t version);
-typedef void (*wl_display_roundtrip_func)(struct wl_display *display);
-
+                                               const char *interface, uint32_t version);
+typedef struct wl_event_queue *(*wl_display_create_queue_func)(struct wl_display *display);
+typedef void (*wl_display_roundtrip_queue_func)(struct wl_display *display,
+                                                struct wl_event_queue *queue);
+typedef void (*wl_event_queue_destroy_func)(struct wl_event_queue *queue);
+typedef void *(*wl_proxy_create_wrapper_func)(struct wl_proxy *proxy);
+typedef void(*wl_proxy_wrapper_destroy_func)(void *proxy);
 typedef struct wl_proxy *(*wl_proxy_create_func)(struct wl_proxy *factory,
-    const struct wl_interface *interface);
+                                                 const struct wl_interface *interface);
 typedef void (*wl_proxy_destroy_func)(struct wl_proxy *proxy);
 typedef void (*wl_proxy_marshal_func)(struct wl_proxy *p, uint32_t opcode, ...);
-typedef int (*wl_proxy_add_listener_func) (struct wl_proxy *proxy,
-    void (**implementation)(void), void *data);
+typedef int (*wl_proxy_add_listener_func)(struct wl_proxy *proxy,
+                                          void (**implementation)(void), void *data);
+typedef void (*wl_proxy_set_queue_func)(struct wl_proxy *proxy, struct wl_event_queue *queue);
 
 struct wl_vtable {
-    const struct wl_interface  *buffer_interface;
-    const struct wl_interface  *drm_interface;
-    const struct wl_interface  *registry_interface;
-    wl_display_roundtrip_func   display_roundtrip;
-    wl_proxy_create_func        proxy_create;
-    wl_proxy_destroy_func       proxy_destroy;
-    wl_proxy_marshal_func       proxy_marshal;
-    wl_proxy_add_listener_func  proxy_add_listener;
+    const struct wl_interface        *buffer_interface;
+    const struct wl_interface        *drm_interface;
+    const struct wl_interface        *registry_interface;
+    wl_display_create_queue_func      display_create_queue;
+    wl_display_roundtrip_queue_func   display_roundtrip_queue;
+    wl_event_queue_destroy_func       event_queue_destroy;
+    wl_proxy_create_wrapper_func      proxy_create_wrapper;
+    wl_proxy_wrapper_destroy_func     proxy_wrapper_destroy;
+    wl_proxy_create_func              proxy_create;
+    wl_proxy_destroy_func             proxy_destroy;
+    wl_proxy_marshal_func             proxy_marshal;
+    wl_proxy_add_listener_func        proxy_add_listener;
+    wl_proxy_set_queue_func           proxy_set_queue;
 };
 
 struct va_wl_output {
-    struct dso_handle  *libegl_handle;
-    struct dso_handle  *libwl_client_handle;
-    struct wl_vtable    vtable;
-    struct wl_drm      *wl_drm;
-    struct wl_registry *wl_registry;
+    struct dso_handle     *libegl_handle;
+    struct dso_handle     *libwl_client_handle;
+    struct wl_vtable       vtable;
+    struct wl_event_queue *queue;
+    struct wl_drm         *wl_drm;
+    uint32_t               wl_drm_name;
+    struct wl_registry    *wl_registry;
 };
 
 /* These function are copied and adapted from the version inside
@@ -86,7 +100,7 @@ registry_bind(
     id = wl_vtable->proxy_create((struct wl_proxy *) wl_registry,
                                  interface);
     if (!id)
-      return NULL;
+        return NULL;
 
     wl_vtable->proxy_marshal((struct wl_proxy *) wl_registry,
                              WL_REGISTRY_BIND, name, interface->name,
@@ -106,7 +120,7 @@ display_get_registry(
     callback = wl_vtable->proxy_create((struct wl_proxy *) wl_display,
                                        wl_vtable->registry_interface);
     if (!callback)
-      return NULL;
+        return NULL;
 
     wl_vtable->proxy_marshal((struct wl_proxy *) wl_display,
                              WL_DISPLAY_GET_REGISTRY, callback);
@@ -130,7 +144,7 @@ static void
 registry_handle_global(
     void               *data,
     struct wl_registry *registry,
-    uint32_t            id,
+    uint32_t            name,
     const char         *interface,
     uint32_t            version
 )
@@ -141,14 +155,33 @@ registry_handle_global(
     struct wl_vtable * const wl_vtable = &wl_output->vtable;
 
     if (strcmp(interface, "wl_drm") == 0) {
+        wl_output->wl_drm_name = name;
         wl_output->wl_drm = registry_bind(wl_vtable, wl_output->wl_registry,
-                                          id, wl_vtable->drm_interface, 2);
+                                          name, wl_vtable->drm_interface,
+                                          (version < 2) ? version : 2);
+    }
+}
+
+static void
+registry_handle_global_remove(
+    void               *data,
+    struct wl_registry *registry,
+    uint32_t            name
+)
+{
+    VADriverContextP ctx = data;
+    struct i965_driver_data * const i965 = i965_driver_data(ctx);
+    struct va_wl_output * const wl_output = i965->wl_output;
+
+    if (wl_output->wl_drm && name == wl_output->wl_drm_name) {
+        wl_output->vtable.proxy_destroy((struct wl_proxy *)wl_output->wl_drm);
+        wl_output->wl_drm = NULL;
     }
 }
 
 static const struct wl_registry_listener registry_listener = {
     registry_handle_global,
-    NULL
+    registry_handle_global_remove
 };
 
 /* Ensure wl_drm instance is created */
@@ -158,14 +191,33 @@ ensure_wl_output(VADriverContextP ctx)
     struct i965_driver_data * const i965 = i965_driver_data(ctx);
     struct va_wl_output * const wl_output = i965->wl_output;
     struct wl_vtable * const wl_vtable = &wl_output->vtable;
+    struct wl_display *display_wrapper;
 
     if (wl_output->wl_drm)
         return true;
 
-    wl_output->wl_registry = display_get_registry(wl_vtable, ctx->native_dpy);
+    if (wl_output->queue) {
+        wl_output->vtable.event_queue_destroy(wl_output->queue);
+        wl_output->queue = NULL;
+    }
+    wl_output->queue = wl_vtable->display_create_queue(ctx->native_dpy);
+    if (!wl_output->queue)
+        return false;
+
+    display_wrapper = wl_vtable->proxy_create_wrapper(ctx->native_dpy);
+    if (!display_wrapper)
+        return false;
+    wl_vtable->proxy_set_queue((struct wl_proxy *) display_wrapper, wl_output->queue);
+
+    if (wl_output->wl_registry) {
+        wl_output->vtable.proxy_destroy((struct wl_proxy *)wl_output->wl_registry);
+        wl_output->wl_registry = NULL;
+    }
+    wl_output->wl_registry = display_get_registry(wl_vtable, display_wrapper);
+    wl_vtable->proxy_wrapper_destroy(display_wrapper);
     registry_add_listener(wl_vtable, wl_output->wl_registry,
                           &registry_listener, ctx);
-    wl_vtable->display_roundtrip(ctx->native_dpy);
+    wl_vtable->display_roundtrip_queue(ctx->native_dpy, wl_output->queue);
     if (!wl_output->wl_drm)
         return false;
     return true;
@@ -191,9 +243,9 @@ create_prime_or_planar_buffer(
     struct wl_proxy *id;
 
     id = wl_vtable->proxy_create(
-        (struct wl_proxy *)wl_output->wl_drm,
-        wl_vtable->buffer_interface
-    );
+             (struct wl_proxy *)wl_output->wl_drm,
+             wl_vtable->buffer_interface
+         );
     if (!id)
         return NULL;
 
@@ -280,7 +332,6 @@ va_GetSurfaceBufferWl(
             drm_format = WL_DRM_FORMAT_YUV444;
             break;
         default:
-            assert(0 && "unsupported subsampling");
             return VA_STATUS_ERROR_INVALID_IMAGE_FORMAT;
         }
         offsets[0] = 0;
@@ -291,20 +342,19 @@ va_GetSurfaceBufferWl(
         pitches[2] = obj_surface->cb_cr_pitch;
         break;
     default:
-        assert(0 && "unsupported format");
         return VA_STATUS_ERROR_INVALID_IMAGE_FORMAT;
     }
 
     buffer = create_prime_or_planar_buffer(
-        i965->wl_output,
-        name,
-        fd,
-        obj_surface->orig_width,
-        obj_surface->orig_height,
-        drm_format,
-        offsets,
-        pitches
-    );
+                 i965->wl_output,
+                 name,
+                 fd,
+                 obj_surface->orig_width,
+                 obj_surface->orig_height,
+                 drm_format,
+                 offsets,
+                 pitches
+             );
 
     if (fd != -1)
         close(fd);
@@ -349,26 +399,62 @@ i965_output_wayland_init(VADriverContextP ctx)
     struct wl_vtable *wl_vtable;
 
     static const struct dso_symbol libegl_symbols[] = {
-        { "wl_drm_interface",
-          offsetof(struct wl_vtable, drm_interface) },
+        {
+            "wl_drm_interface",
+            offsetof(struct wl_vtable, drm_interface)
+        },
         { NULL, }
     };
 
     static const struct dso_symbol libwl_client_symbols[] = {
-        { "wl_buffer_interface",
-          offsetof(struct wl_vtable, buffer_interface) },
-        { "wl_registry_interface",
-          offsetof(struct wl_vtable, registry_interface) },
-        { "wl_display_roundtrip",
-          offsetof(struct wl_vtable, display_roundtrip) },
-        { "wl_proxy_create",
-          offsetof(struct wl_vtable, proxy_create) },
-        { "wl_proxy_destroy",
-          offsetof(struct wl_vtable, proxy_destroy) },
-        { "wl_proxy_marshal",
-          offsetof(struct wl_vtable, proxy_marshal) },
-        { "wl_proxy_add_listener",
-          offsetof(struct wl_vtable, proxy_add_listener) },
+        {
+            "wl_buffer_interface",
+            offsetof(struct wl_vtable, buffer_interface)
+        },
+        {
+            "wl_registry_interface",
+            offsetof(struct wl_vtable, registry_interface)
+        },
+        {
+            "wl_display_create_queue",
+            offsetof(struct wl_vtable, display_create_queue)
+        },
+        {
+            "wl_display_roundtrip_queue",
+            offsetof(struct wl_vtable, display_roundtrip_queue)
+        },
+        {
+            "wl_event_queue_destroy",
+            offsetof(struct wl_vtable, event_queue_destroy)
+        },
+        {
+            "wl_proxy_create_wrapper",
+            offsetof(struct wl_vtable, proxy_create_wrapper)
+        },
+        {
+            "wl_proxy_wrapper_destroy",
+            offsetof(struct wl_vtable, proxy_wrapper_destroy)
+        },
+        {
+            "wl_proxy_create",
+            offsetof(struct wl_vtable, proxy_create)
+        },
+        {
+            "wl_proxy_destroy",
+            offsetof(struct wl_vtable, proxy_destroy)
+        },
+        {
+            "wl_proxy_marshal",
+            offsetof(struct wl_vtable, proxy_marshal)
+        },
+        {
+            "wl_proxy_add_listener",
+            offsetof(struct wl_vtable, proxy_add_listener)
+        },
+        {
+            "wl_proxy_set_queue",
+            offsetof(struct wl_vtable, proxy_set_queue)
+        },
         { NULL, }
     };
 
@@ -380,8 +466,11 @@ i965_output_wayland_init(VADriverContextP ctx)
         goto error;
 
     i965->wl_output->libegl_handle = dso_open(LIBEGL_NAME);
-    if (!i965->wl_output->libegl_handle)
-        goto error;
+    if (!i965->wl_output->libegl_handle) {
+        i965->wl_output->libegl_handle = dso_open(LIBEGL_NAME_FALLBACK);
+        if (!i965->wl_output->libegl_handle)
+            goto error;
+    }
 
     dso_handle = i965->wl_output->libegl_handle;
     wl_vtable  = &i965->wl_output->vtable;
@@ -424,6 +513,16 @@ i965_output_wayland_terminate(VADriverContextP ctx)
     if (wl_output->wl_drm) {
         wl_output->vtable.proxy_destroy((struct wl_proxy *)wl_output->wl_drm);
         wl_output->wl_drm = NULL;
+    }
+
+    if (wl_output->wl_registry) {
+        wl_output->vtable.proxy_destroy((struct wl_proxy *)wl_output->wl_registry);
+        wl_output->wl_registry = NULL;
+    }
+
+    if (wl_output->queue) {
+        wl_output->vtable.event_queue_destroy(wl_output->queue);
+        wl_output->queue = NULL;
     }
 
     if (wl_output->libegl_handle) {

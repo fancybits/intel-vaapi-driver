@@ -61,6 +61,9 @@ protected:
         struct i965_driver_data *i965(*this);
         if (not i965) return NULL;
 
+        if (IS_GEN9(i965->intel.device_info))
+            is_gen9 = true;
+
         struct object_context const *obj_context = CONTEXT(context);
         if (not obj_context) return NULL;
 
@@ -72,6 +75,7 @@ protected:
     VAEntrypoint    entrypoint;
     VAConfigID      config = VA_INVALID_ID;
     VAContextID     context = VA_INVALID_ID;
+    bool            is_gen9 = false;
 };
 
 TEST_P(AVCEContextTest, RateControl)
@@ -88,9 +92,27 @@ TEST_P(AVCEContextTest, RateControl)
         VA_RC_VBR_CONSTRAINED, VA_RC_MB,
     };
 
+    struct i965_driver_data *i965(*this);
+    ASSERT_PTR(i965);
+
+    const std::map<VAEntrypoint, unsigned> supportedBRC = {
+        {VAEntrypointEncSlice, i965->codec_info->h264_brc_mode},
+        {VAEntrypointEncSliceLP, i965->codec_info->lp_h264_brc_mode},
+        {VAEntrypointFEI, VA_RC_CQP},
+    };
+
     for (auto rc : rateControls) {
         ConfigAttribs attribs(1, {type:VAConfigAttribRateControl, value:rc});
-        config = createConfig(profile, entrypoint, attribs);
+
+        const VAStatus expect =
+            ((rc & supportedBRC.at(entrypoint)) ||
+                profile == VAProfileH264MultiviewHigh ||
+                profile == VAProfileH264StereoHigh) ?
+            VA_STATUS_SUCCESS : VA_STATUS_ERROR_INVALID_CONFIG;
+
+        config = createConfig(profile, entrypoint, attribs, expect);
+        if (expect != VA_STATUS_SUCCESS) continue;
+
         context = createContext(config, 1, 1);
         if (HasFailure()) continue;
 
@@ -218,17 +240,6 @@ TEST_P(AVCEContextTest, QualityRange)
         return;
     }
 
-    const std::map<VAProfile, unsigned> qranges = {
-        {VAProfileH264ConstrainedBaseline, entrypoint == VAEntrypointEncSliceLP
-            ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE},
-        {VAProfileH264Main, entrypoint == VAEntrypointEncSliceLP
-            ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE},
-        {VAProfileH264High, entrypoint == VAEntrypointEncSliceLP
-            ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE},
-        {VAProfileH264MultiviewHigh, 1u},
-        {VAProfileH264StereoHigh, 1u},
-    };
-
     ASSERT_NO_FAILURE(
         config = createConfig(profile, entrypoint);
         context = createContext(config, 1, 1);
@@ -237,6 +248,31 @@ TEST_P(AVCEContextTest, QualityRange)
     struct intel_encoder_context const *hw_context(*this);
     ASSERT_PTR(hw_context);
 
+    std::map<VAProfile, unsigned> qranges;
+    if(is_gen9) {
+        qranges = {
+            {VAProfileH264ConstrainedBaseline, entrypoint == VAEntrypointEncSliceLP
+                ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE_AVC},
+            {VAProfileH264Main, entrypoint == VAEntrypointEncSliceLP
+                ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE_AVC},
+            {VAProfileH264High, entrypoint == VAEntrypointEncSliceLP
+                ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE_AVC},
+            {VAProfileH264MultiviewHigh, ENCODER_QUALITY_RANGE_AVC},
+            {VAProfileH264StereoHigh, ENCODER_QUALITY_RANGE_AVC},
+        };
+    }else {
+        qranges = {
+            {VAProfileH264ConstrainedBaseline, entrypoint == VAEntrypointEncSliceLP
+                ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE},
+            {VAProfileH264Main, entrypoint == VAEntrypointEncSliceLP
+                ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE},
+            {VAProfileH264High, entrypoint == VAEntrypointEncSliceLP
+                ? ENCODER_LP_QUALITY_RANGE : ENCODER_QUALITY_RANGE},
+            {VAProfileH264MultiviewHigh, 1u},
+            {VAProfileH264StereoHigh, 1u},
+        };
+    }
+
     EXPECT_EQ(qranges.at(profile), hw_context->quality_range);
 }
 
@@ -244,10 +280,13 @@ INSTANTIATE_TEST_CASE_P(
     AVCEncode, AVCEContextTest, ::testing::Values(
         std::make_tuple(VAProfileH264ConstrainedBaseline, VAEntrypointEncSlice),
         std::make_tuple(VAProfileH264ConstrainedBaseline, VAEntrypointEncSliceLP),
+        std::make_tuple(VAProfileH264ConstrainedBaseline, VAEntrypointFEI),
         std::make_tuple(VAProfileH264Main, VAEntrypointEncSlice),
         std::make_tuple(VAProfileH264Main, VAEntrypointEncSliceLP),
+        std::make_tuple(VAProfileH264Main, VAEntrypointFEI),
         std::make_tuple(VAProfileH264High, VAEntrypointEncSlice),
         std::make_tuple(VAProfileH264High, VAEntrypointEncSliceLP),
+        std::make_tuple(VAProfileH264High, VAEntrypointFEI),
         std::make_tuple(VAProfileH264MultiviewHigh, VAEntrypointEncSlice),
         std::make_tuple(VAProfileH264StereoHigh, VAEntrypointEncSlice)
     )

@@ -8,11 +8,11 @@
  * distribute, sub license, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
@@ -55,6 +55,14 @@
 # define VA_RT_FORMAT_YUV420_10BPP      0x00000100
 # define VA_FOURCC_P010                 0x30313050
 # define VA_FOURCC_P016                 0x36313050
+
+#endif
+
+#if VA_CHECK_VERSION(1,0,0)
+
+# define VAEncPackedHeaderMiscMask      0x80000000
+# define VAEncPackedHeaderH264_SEI      (VAEncPackedHeaderMiscMask | 1)
+# define VAEncPackedHeaderHEVC_SEI      (VAEncPackedHeaderMiscMask | 1)
 
 #endif
 

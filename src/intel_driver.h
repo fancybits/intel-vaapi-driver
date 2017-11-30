@@ -150,8 +150,7 @@ extern uint32_t g_intel_debug_option_flags;
         }                                       \
     } while (0)
 
-struct intel_device_info
-{
+struct intel_device_info {
     int gen;
     int gt;
 
@@ -166,10 +165,11 @@ struct intel_device_info
     unsigned int is_skylake     : 1; /* gen9 */
     unsigned int is_broxton     : 1; /* gen9 */
     unsigned int is_kabylake    : 1; /* gen9p5 */
+    unsigned int is_glklake     : 1; /* gen9p5 lp*/
+    unsigned int is_cfllake     : 1;
 };
 
-struct intel_driver_data 
-{
+struct intel_driver_data {
     int fd;
     int device_id;
     int revision;
@@ -204,8 +204,7 @@ intel_driver_data(VADriverContextP ctx)
     return (struct intel_driver_data *)ctx->pDriverData;
 }
 
-struct intel_region
-{
+struct intel_region {
     int x;
     int y;
     unsigned int width;
@@ -235,6 +234,9 @@ struct intel_region
 
 #define IS_BXT(device_info)             (device_info->is_broxton)
 
-#define IS_KBL(device_info)             (device_info->is_kabylake)
+#define IS_KBL(device_info)             (device_info->is_kabylake ||\
+                                         device_info->is_cfllake)
+
+#define IS_GLK(device_info)             (device_info->is_glklake)
 
 #endif /* _INTEL_DRIVER_H_ */

@@ -45,62 +45,47 @@ extern struct hw_context *
 i965_proc_context_init(VADriverContextP ctx,
                        struct object_config *obj_config);
 
-static VAStatus 
-gen75_vpp_fmt_cvt(VADriverContextP ctx, 
-                  VAProfile profile, 
+static VAStatus
+gen75_vpp_fmt_cvt(VADriverContextP ctx,
+                  VAProfile profile,
                   union codec_state *codec_state,
                   struct hw_context *hw_context)
 {
     VAStatus va_status = VA_STATUS_SUCCESS;
-    struct intel_video_process_context *proc_ctx = 
-             (struct intel_video_process_context *)hw_context;
-  
+    struct intel_video_process_context *proc_ctx =
+        (struct intel_video_process_context *)hw_context;
+
     va_status = i965_proc_picture(ctx, profile, codec_state,
                                   proc_ctx->vpp_fmt_cvt_ctx);
 
     return va_status;
 }
 
-static VAStatus 
-gen75_vpp_vebox(VADriverContextP ctx, 
+static VAStatus
+gen75_vpp_vebox(VADriverContextP ctx,
                 struct intel_video_process_context* proc_ctx)
 {
-     VAStatus va_status = VA_STATUS_SUCCESS;
-     VAProcPipelineParameterBuffer* pipeline_param = proc_ctx->pipeline_param; 
-     struct i965_driver_data *i965 = i965_driver_data(ctx); 
- 
-     /* vpp features based on VEBox fixed function */
-     if(proc_ctx->vpp_vebox_ctx == NULL) {
-         proc_ctx->vpp_vebox_ctx = gen75_vebox_context_init(ctx);
-     }
+    VAStatus va_status = VA_STATUS_SUCCESS;
+    VAProcPipelineParameterBuffer* pipeline_param = proc_ctx->pipeline_param;
+    struct i965_driver_data *i965 = i965_driver_data(ctx);
 
-     proc_ctx->vpp_vebox_ctx->pipeline_param  = pipeline_param;
-     proc_ctx->vpp_vebox_ctx->surface_input_object = proc_ctx->surface_pipeline_input_object;
-     proc_ctx->vpp_vebox_ctx->surface_output_object  = proc_ctx->surface_render_output_object;
+    /* vpp features based on VEBox fixed function */
+    if (proc_ctx->vpp_vebox_ctx == NULL) {
+        proc_ctx->vpp_vebox_ctx = gen75_vebox_context_init(ctx);
+    }
 
-     if (IS_HASWELL(i965->intel.device_info))
-         va_status = gen75_vebox_process_picture(ctx, proc_ctx->vpp_vebox_ctx);
-     else if (IS_GEN8(i965->intel.device_info))
-         va_status = gen8_vebox_process_picture(ctx, proc_ctx->vpp_vebox_ctx);
-     else if (IS_GEN9(i965->intel.device_info))
-         va_status = gen9_vebox_process_picture(ctx, proc_ctx->vpp_vebox_ctx);
+    proc_ctx->vpp_vebox_ctx->pipeline_param  = pipeline_param;
+    proc_ctx->vpp_vebox_ctx->surface_input_object = proc_ctx->surface_pipeline_input_object;
+    proc_ctx->vpp_vebox_ctx->surface_output_object  = proc_ctx->surface_render_output_object;
 
-     return va_status;
-} 
+    if (IS_HASWELL(i965->intel.device_info))
+        va_status = gen75_vebox_process_picture(ctx, proc_ctx->vpp_vebox_ctx);
+    else if (IS_GEN8(i965->intel.device_info))
+        va_status = gen8_vebox_process_picture(ctx, proc_ctx->vpp_vebox_ctx);
+    else if (IS_GEN9(i965->intel.device_info))
+        va_status = gen9_vebox_process_picture(ctx, proc_ctx->vpp_vebox_ctx);
 
-static int intel_gpe_support_10bit_scaling(struct intel_video_process_context *proc_ctx)
-{
-    struct i965_proc_context *gpe_proc_ctx;
-
-    if (!proc_ctx || !proc_ctx->vpp_fmt_cvt_ctx)
-        return 0;
-
-    gpe_proc_ctx = (struct i965_proc_context *)proc_ctx->vpp_fmt_cvt_ctx;
-
-    if (gpe_proc_ctx->pp_context.scaling_context_initialized)
-        return 1;
-    else
-        return 0;
+    return va_status;
 }
 
 static void
@@ -122,9 +107,9 @@ rgb_to_yuv(unsigned int argb,
 
 static void
 gen8plus_vpp_clear_surface(VADriverContextP ctx,
-                       struct i965_post_processing_context *pp_context,
-                       struct object_surface *obj_surface,
-                       unsigned int color)
+                           struct i965_post_processing_context *pp_context,
+                           struct object_surface *obj_surface,
+                           unsigned int color)
 {
     struct intel_batchbuffer *batch = pp_context->batch;
     unsigned int blt_cmd, br13;
@@ -171,8 +156,8 @@ gen8plus_vpp_clear_surface(VADriverContextP ctx,
               region_height << 16 |
               region_width);
     OUT_RELOC64(batch, obj_surface->bo,
-              I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-              0);
+                I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
+                0);
     OUT_BATCH(batch, y);
 
     br13 = 0xf0 << 16;
@@ -195,15 +180,15 @@ gen8plus_vpp_clear_surface(VADriverContextP ctx,
               region_height << 16 |
               region_width);
     OUT_RELOC64(batch, obj_surface->bo,
-              I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
-              obj_surface->width * obj_surface->y_cb_offset);
+                I915_GEM_DOMAIN_RENDER, I915_GEM_DOMAIN_RENDER,
+                obj_surface->width * obj_surface->y_cb_offset);
     OUT_BATCH(batch, v << 8 | u);
 
     ADVANCE_BATCH(batch);
     intel_batchbuffer_end_atomic(batch);
 }
 
-VAStatus 
+VAStatus
 gen75_proc_picture(VADriverContextP ctx,
                    VAProfile profile,
                    union codec_state *codec_state,
@@ -211,10 +196,10 @@ gen75_proc_picture(VADriverContextP ctx,
 {
     struct i965_driver_data *i965 = i965_driver_data(ctx);
     struct proc_state* proc_st = &(codec_state->proc);
-    struct intel_video_process_context *proc_ctx = 
-             (struct intel_video_process_context *)hw_context;
-    VAProcPipelineParameterBuffer *pipeline_param = 
-             (VAProcPipelineParameterBuffer *)proc_st->pipeline_param->buffer;
+    struct intel_video_process_context *proc_ctx =
+        (struct intel_video_process_context *)hw_context;
+    VAProcPipelineParameterBuffer *pipeline_param =
+        (VAProcPipelineParameterBuffer *)proc_st->pipeline_param->buffer;
     struct object_surface *obj_dst_surf = NULL;
     struct object_surface *obj_src_surf = NULL;
 
@@ -260,7 +245,7 @@ gen75_proc_picture(VADriverContextP ctx,
         goto error;
     }
 
-    if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL ){
+    if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL) {
         /* explicitly initialize the VPP based on Render ring */
         if (proc_ctx->vpp_fmt_cvt_ctx == NULL)
             proc_ctx->vpp_fmt_cvt_ctx = i965_proc_context_init(ctx, NULL);
@@ -275,7 +260,7 @@ gen75_proc_picture(VADriverContextP ctx,
             fourcc = VA_FOURCC_P010;
 
         i965_check_alloc_surface_bo(ctx, obj_dst_surf, is_tiled, fourcc, sampling);
-    }  
+    }
 
     if (pipeline_param->surface_region) {
         src_rect.x = pipeline_param->surface_region->x;
@@ -301,112 +286,34 @@ gen75_proc_picture(VADriverContextP ctx,
         dst_rect.height = obj_dst_surf->orig_height;
     }
 
-    if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL ) {
-/* The Bit 2 is used to indicate that it is 10bit or 8bit.
- * The Bit 0/1 is used to indicate the 420/422/444 format
- */
-#define SRC_10BIT_420    (5 << 0)
-#define SRC_10BIT_422    (6 << 0)
-#define SRC_10BIT_444    (7 << 0)
-#define SRC_8BIT_420     (1 << 0)
+    if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL) {
+        VAStatus status = VA_STATUS_ERROR_UNIMPLEMENTED;
+        struct i965_proc_context *gpe_proc_ctx;
+        struct i965_surface src_surface, dst_surface;
 
-/* The Bit 6 is used to indicate that it is 10bit or 8bit.
- * The Bit 5/4 is used to indicate the 420/422/444 format
- */
-#define DST_10BIT_420    (5 << 4)
-#define DST_10BIT_422    (6 << 4)
-#define DST_10BIT_444    (7 << 4)
-#define DST_8BIT_420     (1 << 4)
+        gpe_proc_ctx = (struct i965_proc_context *)proc_ctx->vpp_fmt_cvt_ctx;
+        assert(gpe_proc_ctx != NULL); // gpe_proc_ctx must be a non-NULL pointer
 
-/* This is mainly for YUY2/RGBA. It is reserved for further */
-#define SRC_YUV_PACKED   (1 << 3)
-#define DST_YUV_PACKED   (1 << 7)
+        if ((gpe_proc_ctx->pp_context.scaling_gpe_context_initialized & VPPGPE_8BIT_8BIT) &&
+            (obj_dst_surf->fourcc == VA_FOURCC_NV12) &&
+            pipeline_param->output_background_color)
+            gen8plus_vpp_clear_surface(ctx,
+                                       &gpe_proc_ctx->pp_context,
+                                       obj_dst_surf,
+                                       pipeline_param->output_background_color);
 
-#define MASK_CSC         (0xFF)
-#define SCALE_10BIT_420  (SRC_10BIT_420 | DST_10BIT_420)
-#define SCALE_8BIT_420  (SRC_8BIT_420 | DST_8BIT_420)
+        src_surface.base = (struct object_base *)obj_src_surf;
+        src_surface.type = I965_SURFACE_TYPE_SURFACE;
+        dst_surface.base = (struct object_base *)obj_dst_surf;
+        dst_surface.type = I965_SURFACE_TYPE_SURFACE;
 
-        unsigned int scale_flag;
+        status = intel_common_scaling_post_processing(ctx,
+                                                      &gpe_proc_ctx->pp_context,
+                                                      &src_surface, &src_rect,
+                                                      &dst_surface, &dst_rect);
 
-        scale_flag = 0;
-        if (obj_src_surf->fourcc == VA_FOURCC_P010 ||
-            obj_src_surf->fourcc == VA_FOURCC_I010)
-            scale_flag |= SRC_10BIT_420;
-
-        if (obj_dst_surf->fourcc == VA_FOURCC_P010 ||
-            obj_dst_surf->fourcc == VA_FOURCC_I010)
-            scale_flag |= DST_10BIT_420;
-
-        if (obj_src_surf->fourcc == VA_FOURCC_NV12 ||
-            obj_src_surf->fourcc == VA_FOURCC_I420)
-            scale_flag |= SRC_8BIT_420;
-
-        if (obj_dst_surf->fourcc == VA_FOURCC_NV12 ||
-            obj_dst_surf->fourcc == VA_FOURCC_I420)
-            scale_flag |= DST_8BIT_420;
-
-        /* If P010 is converted without resolution change,
-         * fall back to VEBOX
-         */
-        if (i965->intel.has_vebox &&
-            (obj_src_surf->fourcc == VA_FOURCC_P010) &&
-            (obj_dst_surf->fourcc == VA_FOURCC_P010) &&
-            (src_rect.width == dst_rect.width) &&
-            (src_rect.height == dst_rect.height))
-            scale_flag = 0;
-
-        if (((scale_flag & MASK_CSC) == SCALE_10BIT_420) &&
-            intel_gpe_support_10bit_scaling(proc_ctx)) {
-            struct i965_proc_context *gpe_proc_ctx;
-            struct i965_surface src_surface, dst_surface;
-            unsigned int tmp_width, tmp_x;
-
-
-            src_surface.base = (struct object_base *)obj_src_surf;
-            src_surface.type = I965_SURFACE_TYPE_SURFACE;
-            dst_surface.base = (struct object_base *)obj_dst_surf;
-            dst_surface.type = I965_SURFACE_TYPE_SURFACE;
-            gpe_proc_ctx = (struct i965_proc_context *)proc_ctx->vpp_fmt_cvt_ctx;
-
-            tmp_x = ALIGN_FLOOR(dst_rect.x, 2);
-            tmp_width = dst_rect.x + dst_rect.width;
-            tmp_width = tmp_width - tmp_x;
-            dst_rect.x = tmp_x;
-            dst_rect.width = tmp_width;
-
-            return gen9_p010_scaling_post_processing(ctx, &gpe_proc_ctx->pp_context,
-                                                     &src_surface, &src_rect,
-                                                     &dst_surface, &dst_rect);
-        }
-        if (((scale_flag & MASK_CSC) == SCALE_8BIT_420) &&
-             intel_vpp_support_yuv420p8_scaling(proc_ctx)) {
-            struct i965_proc_context *gpe_proc_ctx;
-            struct i965_surface src_surface, dst_surface;
-            unsigned int tmp_width, tmp_x;
-
-
-            src_surface.base = (struct object_base *)obj_src_surf;
-            src_surface.type = I965_SURFACE_TYPE_SURFACE;
-            dst_surface.base = (struct object_base *)obj_dst_surf;
-            dst_surface.type = I965_SURFACE_TYPE_SURFACE;
-            gpe_proc_ctx = (struct i965_proc_context *)proc_ctx->vpp_fmt_cvt_ctx;
-
-            tmp_x = ALIGN_FLOOR(dst_rect.x, 4);
-            tmp_width = dst_rect.x + dst_rect.width;
-            tmp_width = tmp_width - tmp_x;
-            dst_rect.x = tmp_x;
-            dst_rect.width = tmp_width;
-
-            if (obj_dst_surf->fourcc == VA_FOURCC_NV12 &&
-                pipeline_param->output_background_color)
-                gen8plus_vpp_clear_surface(ctx, &gpe_proc_ctx->pp_context,
-                                           obj_dst_surf,
-                                           pipeline_param->output_background_color);
-
-            return intel_yuv420p8_scaling_post_processing(ctx, &gpe_proc_ctx->pp_context,
-                                                     &src_surface, &src_rect,
-                                                     &dst_surface, &dst_rect);
-        }
+        if (status != VA_STATUS_ERROR_UNIMPLEMENTED)
+            return status;
     }
 
     proc_ctx->surface_render_output_object = obj_dst_surf;
@@ -416,36 +323,34 @@ gen75_proc_picture(VADriverContextP ctx,
     int vpp_stage1 = 0, vpp_stage2 = 1, vpp_stage3 = 0;
 
 
-    if(obj_src_surf->fourcc == VA_FOURCC_P010) {
+    if (obj_src_surf->fourcc == VA_FOURCC_P010) {
         vpp_stage1 = 1;
         vpp_stage2 = 0;
         vpp_stage3 = 0;
-        if(pipeline_param->num_filters == 0 || pipeline_param->filters == NULL) {
-            if(src_rect.x != dst_rect.x ||
+        if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL) {
+            if (src_rect.x != dst_rect.x ||
                 src_rect.y != dst_rect.y ||
                 src_rect.width != dst_rect.width ||
                 src_rect.height != dst_rect.height)
-              vpp_stage2 = 1;
+                vpp_stage2 = 1;
 
-            if(obj_dst_surf->fourcc != VA_FOURCC_NV12 &&
+            if (obj_dst_surf->fourcc != VA_FOURCC_NV12 &&
                 obj_dst_surf->fourcc != VA_FOURCC_P010)
-              vpp_stage2 = 1;
-        }
-        else
-          vpp_stage2 = 1;
+                vpp_stage2 = 1;
+        } else
+            vpp_stage2 = 1;
 
-        if(vpp_stage2 == 1) {
-          if(obj_dst_surf->fourcc == VA_FOURCC_P010)
-            vpp_stage3 = 1;
+        if (vpp_stage2 == 1) {
+            if (obj_dst_surf->fourcc == VA_FOURCC_P010)
+                vpp_stage3 = 1;
         }
-    }
-    else if(obj_dst_surf->fourcc == VA_FOURCC_P010) {
+    } else if (obj_dst_surf->fourcc == VA_FOURCC_P010) {
         vpp_stage2 = 1;
         vpp_stage3 = 1;
 
-        if((obj_src_surf->fourcc == VA_FOURCC_NV12) &&
+        if ((obj_src_surf->fourcc == VA_FOURCC_NV12) &&
             (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL)) {
-            if((src_rect.x == dst_rect.x) &&
+            if ((src_rect.x == dst_rect.x) &&
                 (src_rect.y == dst_rect.y) &&
                 (src_rect.width == dst_rect.width) &&
                 (src_rect.height == dst_rect.height))
@@ -453,7 +358,7 @@ gen75_proc_picture(VADriverContextP ctx,
         }
     }
 
-    if(vpp_stage1 == 1){
+    if (vpp_stage1 == 1) {
         memset((void *)&pipeline_param2, 0, sizeof(pipeline_param2));
         pipeline_param2.surface = pipeline_param->surface;
         pipeline_param2.surface_region = &src_rect;
@@ -463,7 +368,7 @@ gen75_proc_picture(VADriverContextP ctx,
 
         proc_ctx->pipeline_param = &pipeline_param2;
 
-        if(vpp_stage2 == 1) {
+        if (vpp_stage2 == 1) {
             status = i965_CreateSurfaces(ctx,
                                          obj_src_surf->orig_width,
                                          obj_src_surf->orig_height,
@@ -482,7 +387,7 @@ gen75_proc_picture(VADriverContextP ctx,
         gen75_vpp_vebox(ctx, proc_ctx);
     }
 
-    if((vpp_stage3 == 1) && (vpp_stage2 == 1)) {
+    if ((vpp_stage3 == 1) && (vpp_stage2 == 1)) {
         status = i965_CreateSurfaces(ctx,
                                      obj_dst_surf->orig_width,
                                      obj_dst_surf->orig_height,
@@ -498,15 +403,15 @@ gen75_proc_picture(VADriverContextP ctx,
 
     VABufferID *filter_id = (VABufferID*) pipeline_param->filters;
 
-    if(vpp_stage2 == 1) {
-        if(stage1_dst_surf != NULL) {
+    if (vpp_stage2 == 1) {
+        if (stage1_dst_surf != NULL) {
             proc_ctx->surface_pipeline_input_object = stage1_dst_surf;
             proc_ctx->surface_render_output_object = obj_dst_surf;
 
             pipeline_param->surface = out_surface_id1;
         }
 
-        if(stage2_dst_surf != NULL) {
+        if (stage2_dst_surf != NULL) {
             proc_ctx->surface_render_output_object = stage2_dst_surf;
 
             proc_st->current_render_target = out_surface_id2;
@@ -514,64 +419,63 @@ gen75_proc_picture(VADriverContextP ctx,
 
         proc_ctx->pipeline_param = pipeline_param;
 
-        if(pipeline_param->num_filters == 0 || pipeline_param->filters == NULL ){
+        if (pipeline_param->num_filters == 0 || pipeline_param->filters == NULL) {
             /* implicity surface format coversion and scaling */
 
             status = gen75_vpp_fmt_cvt(ctx, profile, codec_state, hw_context);
-            if(status != VA_STATUS_SUCCESS)
+            if (status != VA_STATUS_SUCCESS)
                 goto error;
-        }else if(pipeline_param->num_filters == 1) {
-           struct object_buffer * obj_buf = BUFFER((*filter_id) + 0);
+        } else if (pipeline_param->num_filters == 1) {
+            struct object_buffer * obj_buf = BUFFER((*filter_id) + 0);
 
-           assert(obj_buf && obj_buf->buffer_store && obj_buf->buffer_store->buffer);
+            assert(obj_buf && obj_buf->buffer_store && obj_buf->buffer_store->buffer);
 
-           if (!obj_buf ||
-               !obj_buf->buffer_store ||
-               !obj_buf->buffer_store->buffer) {
-               status = VA_STATUS_ERROR_INVALID_FILTER_CHAIN;
-               goto error;
-           }
+            if (!obj_buf ||
+                !obj_buf->buffer_store ||
+                !obj_buf->buffer_store->buffer) {
+                status = VA_STATUS_ERROR_INVALID_FILTER_CHAIN;
+                goto error;
+            }
 
-           VAProcFilterParameterBuffer* filter =
-               (VAProcFilterParameterBuffer*)obj_buf-> buffer_store->buffer;
+            VAProcFilterParameterBuffer* filter =
+                (VAProcFilterParameterBuffer*)obj_buf-> buffer_store->buffer;
 
-           if (filter->type == VAProcFilterNoiseReduction         ||
-               filter->type == VAProcFilterDeinterlacing          ||
-               filter->type == VAProcFilterSkinToneEnhancement    ||
-               filter->type == VAProcFilterSharpening             ||
-               filter->type == VAProcFilterColorBalance){
-               gen75_vpp_vebox(ctx, proc_ctx);
-           }
-        }else if (pipeline_param->num_filters >= 2) {
-             unsigned int i = 0;
-             for (i = 0; i < pipeline_param->num_filters; i++){
-                 struct object_buffer * obj_buf = BUFFER(pipeline_param->filters[i]);
+            if (filter->type == VAProcFilterNoiseReduction         ||
+                filter->type == VAProcFilterDeinterlacing          ||
+                filter->type == VAProcFilterSkinToneEnhancement    ||
+                filter->type == VAProcFilterSharpening             ||
+                filter->type == VAProcFilterColorBalance) {
+                gen75_vpp_vebox(ctx, proc_ctx);
+            }
+        } else if (pipeline_param->num_filters >= 2) {
+            unsigned int i = 0;
+            for (i = 0; i < pipeline_param->num_filters; i++) {
+                struct object_buffer * obj_buf = BUFFER(pipeline_param->filters[i]);
 
-                 if (!obj_buf ||
-                     !obj_buf->buffer_store ||
-                     !obj_buf->buffer_store->buffer) {
-                     status = VA_STATUS_ERROR_INVALID_FILTER_CHAIN;
-                     goto error;
-                 }
+                if (!obj_buf ||
+                    !obj_buf->buffer_store ||
+                    !obj_buf->buffer_store->buffer) {
+                    status = VA_STATUS_ERROR_INVALID_FILTER_CHAIN;
+                    goto error;
+                }
 
-                 VAProcFilterParameterBuffer* filter =
-                     (VAProcFilterParameterBuffer*)obj_buf-> buffer_store->buffer;
+                VAProcFilterParameterBuffer* filter =
+                    (VAProcFilterParameterBuffer*)obj_buf-> buffer_store->buffer;
 
-                 if (filter->type != VAProcFilterNoiseReduction       &&
-                     filter->type != VAProcFilterDeinterlacing        &&
-                     filter->type != VAProcFilterSkinToneEnhancement  &&
-                     filter->type != VAProcFilterColorBalance) {
-                     fprintf(stderr, "Do not support multiply filters outside vebox pipeline \n");
-                     assert(0);
-                 }
-             }
-             gen75_vpp_vebox(ctx, proc_ctx);
+                if (filter->type != VAProcFilterNoiseReduction       &&
+                    filter->type != VAProcFilterDeinterlacing        &&
+                    filter->type != VAProcFilterSkinToneEnhancement  &&
+                    filter->type != VAProcFilterColorBalance) {
+                    fprintf(stderr, "Do not support multiply filters outside vebox pipeline \n");
+                    assert(0);
+                }
+            }
+            gen75_vpp_vebox(ctx, proc_ctx);
         }
     }
 
-    if(vpp_stage3 == 1)
-    {
-        if(vpp_stage2 == 1) {
+    if (vpp_stage3 == 1) {
+        if (vpp_stage2 == 1) {
             memset(&pipeline_param2, 0, sizeof(pipeline_param2));
             pipeline_param2.surface = out_surface_id2;
             pipeline_param2.surface_region = &dst_rect;
@@ -603,32 +507,32 @@ error:
     return status;
 }
 
-static void 
+static void
 gen75_proc_context_destroy(void *hw_context)
 {
     struct intel_video_process_context *proc_ctx =
-                      (struct intel_video_process_context *)hw_context;
+        (struct intel_video_process_context *)hw_context;
     VADriverContextP ctx = (VADriverContextP)(proc_ctx->driver_context);
 
-    if(proc_ctx->vpp_fmt_cvt_ctx){
+    if (proc_ctx->vpp_fmt_cvt_ctx) {
         proc_ctx->vpp_fmt_cvt_ctx->destroy(proc_ctx->vpp_fmt_cvt_ctx);
         proc_ctx->vpp_fmt_cvt_ctx = NULL;
     }
 
-    if(proc_ctx->vpp_vebox_ctx){
-       gen75_vebox_context_destroy(ctx,proc_ctx->vpp_vebox_ctx);
-       proc_ctx->vpp_vebox_ctx = NULL;
+    if (proc_ctx->vpp_vebox_ctx) {
+        gen75_vebox_context_destroy(ctx, proc_ctx->vpp_vebox_ctx);
+        proc_ctx->vpp_vebox_ctx = NULL;
     }
 
     free(proc_ctx);
 }
 
-struct hw_context * 
-gen75_proc_context_init(VADriverContextP ctx, 
+struct hw_context *
+gen75_proc_context_init(VADriverContextP ctx,
                         struct object_config *obj_config)
 {
-   struct intel_video_process_context *proc_context 
-           = calloc(1, sizeof(struct intel_video_process_context));
+    struct intel_video_process_context *proc_context
+        = calloc(1, sizeof(struct intel_video_process_context));
 
     assert(proc_context);
     proc_context->base.destroy = gen75_proc_context_destroy;
@@ -636,7 +540,7 @@ gen75_proc_context_init(VADriverContextP ctx,
 
     proc_context->vpp_vebox_ctx    = NULL;
     proc_context->vpp_fmt_cvt_ctx  = NULL;
- 
+
     proc_context->driver_context = ctx;
 
     return (struct hw_context *)proc_context;

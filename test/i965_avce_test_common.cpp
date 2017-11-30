@@ -42,9 +42,6 @@ VAStatus CheckSupported(VAProfile profile, VAEntrypoint entrypoint)
     EXPECT_PTR(i965);
 
     switch(profile) {
-    case VAProfileH264Baseline:
-        return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
-
     case VAProfileH264ConstrainedBaseline:
     case VAProfileH264Main:
     case VAProfileH264High:
@@ -59,13 +56,22 @@ VAStatus CheckSupported(VAProfile profile, VAEntrypoint entrypoint)
             if (HAS_LP_H264_ENCODING(i965)) {
                 return VA_STATUS_SUCCESS;
             }
+        } else if (entrypoint == VAEntrypointFEI) {
+            if (IS_SKL(i965->intel.device_info)) {
+                return VA_STATUS_SUCCESS;
+            }
+            if (HAS_FEI_H264_ENCODING(i965)) {
+                return VA_STATUS_SUCCESS;
+            }
         }
         break;
 
     case VAProfileH264MultiviewHigh:
     case VAProfileH264StereoHigh:
         if (entrypoint == VAEntrypointEncSlice) {
-            return VA_STATUS_SUCCESS;
+            if (HAS_H264_MVC_ENCODING(i965)) {
+                return VA_STATUS_SUCCESS;
+            }
         }
         break;
 
