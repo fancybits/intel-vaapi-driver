@@ -1,6 +1,6 @@
 # intel-vaapi-driver package version number
 m4_define([intel_vaapi_driver_major_version], [2])
-m4_define([intel_vaapi_driver_minor_version], [0])
+m4_define([intel_vaapi_driver_minor_version], [1])
 m4_define([intel_vaapi_driver_micro_version], [0])
 m4_define([intel_vaapi_driver_pre_version],   [0])
 m4_define([intel_vaapi_driver_version],
@@ -10,7 +10,7 @@ m4_append([intel_vaapi_driver_version], intel_vaapi_driver_pre_version, [.pre])
 ])
 
 # libva minimum version requirement
-m4_define([va_api_version], [1.0.0])
+m4_define([va_api_version], [1.1.0])
 
 # libdrm minimum version requirement
 m4_define([libdrm_version], [2.4.52])
@@ -219,6 +219,7 @@ AC_OUTPUT([
     src/shaders/brc/Makefile
     src/shaders/brc/bsw/Makefile
     src/shaders/brc/skl/Makefile
+    src/shaders/brc/cnl/Makefile
     src/shaders/h264/Makefile
     src/shaders/h264/ildb/Makefile
     src/shaders/h264/mc/Makefile
