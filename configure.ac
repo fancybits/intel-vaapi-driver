@@ -1,6 +1,6 @@
 # intel-vaapi-driver package version number
 m4_define([intel_vaapi_driver_major_version], [2])
-m4_define([intel_vaapi_driver_minor_version], [2])
+m4_define([intel_vaapi_driver_minor_version], [3])
 m4_define([intel_vaapi_driver_micro_version], [0])
 m4_define([intel_vaapi_driver_pre_version],   [0])
 m4_define([intel_vaapi_driver_version],
@@ -85,6 +85,23 @@ AC_SUBST(LIBVA_PACKAGE_VERSION)
 AC_SEARCH_LIBS([dlopen], [dl], [], [
   AC_MSG_ERROR([unable to find the dlopen() function])
 ])
+
+
+# Check for -fstack-protector
+ssp_cc=yes
+if test "X$CC-cc" != "X"; then
+    AC_MSG_CHECKING([whether ${CC-cc} accepts -fstack-protector])
+    ssp_old_cflags="$CFLAGS"
+    CFLAGS="$CFLAGS -fstack-protector"
+    AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[alloca(100);]])], [], [ssp_cc=no])
+    AC_MSG_RESULT([$ssp_cc])
+    if test "X$ssp_cc" = "Xno"; then
+        CFLAGS="$ssp_old_cflags"
+    else
+        AC_DEFINE([ENABLE_SSP_CC], 1, [Define if SSP C support is enabled.])
+    fi
+fi
+AM_CONDITIONAL(USE_SSP, test "$ssp_cc" = "yes")
 
 dnl Check for recent enough DRM
 LIBDRM_VERSION=libdrm_version
