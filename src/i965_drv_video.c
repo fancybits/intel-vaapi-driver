@@ -898,6 +898,7 @@ i965_validate_config(VADriverContextP ctx, VAProfile profile,
             VAEntrypoint wrapper_entrypoints[5] = {0};
             int32_t wrapper_num_entrypoints = 0;
             VADriverContextP pdrvctx = i965->wrapper_pdrvctx;
+            int i = 0;
 
             CALL_VTABLE(pdrvctx, va_status,
                         vaQueryConfigEntrypoints(pdrvctx,
@@ -907,7 +908,7 @@ i965_validate_config(VADriverContextP ctx, VAProfile profile,
 
             if (va_status == VA_STATUS_SUCCESS) {
                 va_status = VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
-                for (int i = 0; i < wrapper_num_entrypoints; i++) {
+                for (i = 0; i < wrapper_num_entrypoints; i++) {
                     if (entrypoint == wrapper_entrypoints[i]) {
                         va_status = VA_STATUS_SUCCESS;
                     }
